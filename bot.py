@@ -5673,26 +5673,43 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
 # پردازش رمز ورود به اتاق
+    
     elif context.user_data.get("joining_room"):
         room_code = context.user_data["joining_room"]
-    
+        
+        # پیوستن به اتاق
         if join_competition_room(room_code, user_id, text):
-            await update.message.reply_text(
-                f"✅ **وارد اتاق شدی!**\n\n"
-                f"🏷 کد اتاق: `{room_code}`\n"
-                f"🕒 تا ساعت: لودینگ...\n"
-                f"👥 حالا {get_room_info(room_code)['player_count']} نفریم\n\n"
-                f"برای مشاهده رتبه‌بندی:\n"
-                f"/room_{room_code}",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=get_competition_keyboard()
-            )
+            room_info = get_room_info(room_code)
+            if room_info:
+                # متن پیام با HTML صحیح
+                message_text = f"""
+<b>✅ وارد اتاق شدی!</b>
+
+<b>🏷 کد اتاق:</b> <code>{room_code}</code>
+<b>🕒 تا ساعت:</b> <code>{room_info['end_time']}</code>
+<b>👥 حالا</b> {room_info['player_count']} <b>نفریم</b>
+
+<b>برای مشاهده رتبه‌بندی:</b>
+/room_{room_code}
+"""
+                
+                await update.message.reply_text(
+                    message_text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=get_competition_keyboard()
+                )
+            else:
+                # اگر اطلاعات اتاق را نتوانستیم دریافت کنیم
+                await update.message.reply_text(
+                    f"✅ وارد اتاق {room_code} شدی!\n\nبرای مشاهده رتبه‌بندی:\n/room_{room_code}",
+                    reply_markup=get_competition_keyboard()
+                )
         else:
             await update.message.reply_text(
                 "❌ رمز اشتباه است یا اتاق وجود ندارد.",
                 reply_markup=get_competition_keyboard()
             )
-    
+        
         context.user_data.pop("joining_room", None)
         return
 
