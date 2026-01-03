@@ -7600,7 +7600,7 @@ def main() -> None:
         # دستورات رقابت
         # خط 7601 را به این صورت تغییر دهید:
         application.add_handler(CommandHandler("room", lambda update, context: show_room_ranking(update, context, context.args[0] if context.args else None)))
-        application.add_handler(CommandHandler("join", join_command_handler))
+        
         
         
         print("\n" + "=" * 70)
