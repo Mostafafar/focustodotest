@@ -3096,31 +3096,61 @@ async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     )
 def create_competition_room(creator_id: int, end_time: str, password: str) -> Optional[str]:
     """ایجاد اتاق رقابت جدید"""
+    conn = None
+    cursor = None
+    
     try:
         room_code = generate_room_code()
+        logger.info(f"🔍 ایجاد اتاق با کد: {room_code}")
         
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # 1. ایجاد اتاق
         query = """
         INSERT INTO competition_rooms (room_code, creator_id, password, end_time, status)
         VALUES (%s, %s, %s, %s, 'waiting')
         RETURNING room_code
         """
         
-        result = db.execute_query(query, (room_code, creator_id, password, end_time), fetch=True)
+        logger.info(f"🔍 در حال ایجاد اتاق در دیتابیس...")
+        cursor.execute(query, (room_code, creator_id, password, end_time))
+        result = cursor.fetchone()
         
-        if result:
-            # سازنده اتاق را به عنوان اولین شرکت‌کننده اضافه کن
-            query2 = """
-            INSERT INTO room_participants (room_code, user_id)
-            VALUES (%s, %s)
-            """
-            db.execute_query(query2, (room_code, creator_id))
-            
-            return room_code
-        return None
+        if not result:
+            logger.error("❌ هیچ نتیجه‌ای از INSERT اتاق برگشت داده نشد")
+            conn.rollback()
+            return None
+        
+        logger.info(f"✅ اتاق {room_code} ایجاد شد")
+        
+        # 2. اضافه کردن سازنده به اتاق
+        query2 = """
+        INSERT INTO room_participants (room_code, user_id)
+        VALUES (%s, %s)
+        """
+        
+        logger.info(f"🔍 در حال اضافه کردن سازنده {creator_id} به اتاق...")
+        cursor.execute(query2, (room_code, creator_id))
+        
+        conn.commit()
+        logger.info(f"✅ سازنده {creator_id} به اتاق {room_code} اضافه شد")
+        
+        return room_code
         
     except Exception as e:
-        logger.error(f"خطا در ایجاد اتاق رقابت: {e}")
+        logger.error(f"❌ خطا در ایجاد اتاق رقابت: {e}", exc_info=True)
+        if conn:
+            conn.rollback()
+            logger.info("🔁 Rollback انجام شد")
         return None
+        
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db.return_connection(conn)
+            logger.info("🔌 Connection بازگردانده شد")
 
 def join_competition_room(room_code: str, user_id: int, password: str) -> bool:
     """پیوستن به اتاق رقابت"""
