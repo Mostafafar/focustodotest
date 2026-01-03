@@ -7398,7 +7398,40 @@ async def show_my_rooms(update: Update, context: ContextTypes.DEFAULT_TYPE, user
             f"مثال: /room_EJ2PJN",
             reply_markup=get_competition_keyboard()
         )
-        
+async def handle_room_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /room برای مشاهده رتبه‌بندی اتاق"""
+    # اگر از فرمت /room_ABCDEF استفاده شده
+    if context.args:
+        room_code = context.args[0]
+    else:
+        # ممکن است از فرمت /room_ABCDEF مستقیم استفاده شده باشد
+        command_text = update.message.text
+        if "_" in command_text:
+            room_code = command_text.split("_")[1]
+        else:
+            await update.message.reply_text(
+                "❌ لطفا کد اتاق را وارد کنید.\n"
+                "مثال: /room D9L9B7\n"
+                "یا: /room_D9L9B7"
+            )
+            return
+    
+    await show_room_ranking(update, context, room_code)
+
+# همچنین یک هندلر برای پیام‌های متنی که با /room_ شروع می‌شوند
+async def handle_room_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """پردازش پیام‌های /room_..."""
+    text = update.message.text.strip()
+    room_code = text.replace("/room_", "")
+    
+    if len(room_code) == 6 and room_code.isalnum():
+        await show_room_ranking(update, context, room_code)
+    else:
+        await update.message.reply_text(
+            "❌ فرمت کد اتاق نامعتبر است.\n"
+            "کد اتاق باید ۶ کاراکتر باشد.\n"
+            "مثال: /room_D9L9B7"
+        )
 def escape_html_for_telegram(text: str) -> str:
     """فرار کردن کاراکترهای مخصوص برای HTML تلگرام"""
     return html.escape(text)
