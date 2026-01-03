@@ -5448,6 +5448,37 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     logger.info(f"📝 دریافت پیام متنی از کاربر {user_id}: '{text}'")
     logger.info(f"🔍 وضعیت user_data: {context.user_data}")
     
+    # --- اینجا اضافه کنید: پردازش دستورات /room_ و /join_ ---
+    # پردازش دستور /room_...
+    if text.startswith("/room_"):
+        room_code = text.replace("/room_", "")
+        if len(room_code) == 6 and room_code.isalnum():
+            await show_room_ranking(update, context, room_code)
+            return
+    
+    # پردازش دستور /join_...
+    elif text.startswith("/join_"):
+        room_code = text.replace("/join_", "")
+        if len(room_code) == 6 and room_code.isalnum():
+            # ذخیره room_code برای مرحله بعد
+            context.user_data["joining_room"] = room_code
+            
+            room_info = get_room_info(room_code)
+            if not room_info:
+                await update.message.reply_text("❌ اتاق یافت نشد.")
+                return
+            
+            await update.message.reply_text(
+                f"<b>🔐 ورود به اتاق #{room_code}</b>\n\n"
+                f"سازنده: {room_info['creator_name'] or 'نامشخص'}\n"
+                f"تا ساعت: {room_info['end_time']}\n"
+                f"شرکت‌کنندگان: {room_info['player_count']} نفر\n\n"
+                f"⚠️ این اتاق رمز دارد.\n"
+                f"لطفا رمز ۴ رقمی را وارد کنید:",
+                reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True),
+                parse_mode=ParseMode.HTML
+            )
+            return
     # منوی اصلی
     if text == "🏆 رتبه‌بندی":
         await show_rankings_text(update, context, user_id)
