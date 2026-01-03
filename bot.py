@@ -7049,6 +7049,95 @@ async def check_competition_rooms_job(context: ContextTypes.DEFAULT_TYPE):
                         
     except Exception as e:
         logger.error(f"خطا در Job بررسی اتاق‌ها: {e}")
+async def join_room_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور پیوستن به اتاق با کد"""
+    user_id = update.effective_user.id
+    
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ فرمت صحیح:\n"
+            "/join <کد_اتاق>\n\n"
+            "مثال:\n"
+            "/join ABC123"
+        )
+        return
+    
+    room_code = context.args[0].upper()
+    room_info = get_room_info(room_code)
+    
+    if not room_info:
+        await update.message.reply_text("❌ اتاق یافت نشد.")
+        return
+    
+    context.user_data["joining_room"] = room_code
+    
+    await update.message.reply_text(
+        f"🔐 **ورود به اتاق #{room_code}**\n\n"
+        f"لطفا رمز ۴ رقمی را وارد کنید:",
+        reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True),
+        parse_mode=ParseMode.MARKDOWN
+    )
+async def show_my_rooms(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
+    """نمایش اتاق‌های کاربر"""
+    try:
+        query = """
+        SELECT cr.room_code, cr.end_time, cr.status,
+               COUNT(rp.user_id) as player_count
+        FROM room_participants rp
+        JOIN competition_rooms cr ON rp.room_code = cr.room_code
+        WHERE rp.user_id = %s
+        GROUP BY cr.room_code, cr.end_time, cr.status
+        ORDER BY cr.created_at DESC
+        LIMIT 10
+        """
+        
+        results = db.execute_query(query, (user_id,), fetchall=True)
+        
+        if not results:
+            await update.message.reply_text(
+                "📭 شما در هیچ اتاقی نیستید.",
+                reply_markup=get_competition_keyboard()
+            )
+            return
+        
+        text = "🏆 **اتاق‌های شما**\n\n"
+        
+        for row in results:
+            room_code, end_time, status, player_count = row
+            
+            status_emoji = {
+                'waiting': '⏳',
+                'active': '🔥',
+                'finished': '✅'
+            }.get(status, '❓')
+            
+            text += f"{status_emoji} **اتاق #{room_code}**\n"
+            text += f"🕒 تا: {end_time} | 👥 {player_count} نفر\n"
+            text += f"📊 وضعیت: "
+            
+            if status == 'waiting':
+                text += f"منتظر {5 - player_count} نفر دیگر\n"
+            elif status == 'active':
+                text += f"فعال - رقابت در جریان\n"
+            else:
+                text += f"تمام شده\n"
+            
+            text += f"🔍 مشاهده: /room_{room_code}\n"
+            text += "─" * 15 + "\n"
+        
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_competition_keyboard()
+        )
+        
+    except Exception as e:
+        logger.error(f"خطا در نمایش اتاق‌های کاربر: {e}")
+        await update.message.reply_text(
+            "❌ خطا در دریافت اطلاعات.",
+            reply_markup=get_competition_keyboard()
+        )
+        
 def escape_html_for_telegram(text: str) -> str:
     """فرار کردن کاراکترهای مخصوص برای HTML تلگرام"""
     return html.escape(text)
@@ -7124,7 +7213,8 @@ def main() -> None:
         application.add_handler(CommandHandler("sendtop", sendtop_command))
         application.add_handler(CommandHandler("users", users_command))
         application.add_handler(CommandHandler("send", send_command))
-        print("   ✓ 11 دستور اصلی ثبت شد")
+        application.add_handler(CommandHandler("my_coupons", my_coupons_command))
+        print("   ✓ 12 دستور اصلی ثبت شد")
         
         
         # در تابع main() به بخش دستورات دیباگ اضافه کنید:
@@ -7154,9 +7244,12 @@ def main() -> None:
         application.add_handler(CommandHandler("check_stats", check_my_stats_command))
         # در تابع main() به بخش دستورات اضافه کنید:
         print("\n🎫 ثبت دستورات نیم‌کوپن...")
+        application.add_handler(CommandHandler("join", join_room_command))
         application.add_handler(CommandHandler("combine_coupons", combine_coupons_command))
-        application.add_handler(CommandHandler("my_coupons", my_coupons_command))
-        print("   ✓ 2 دستور نیم‌کوپن ثبت شد")
+        
+        print("   2 دستور نیم‌کوپن ثبت شد")
+        # دستورات رقابت
+        
         
         print("\n" + "=" * 70)
         print("🤖 ربات Focus Todo آماده اجراست!")
