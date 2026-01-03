@@ -5446,17 +5446,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text = update.message.text.strip()
     
     logger.info(f"📝 دریافت پیام متنی از کاربر {user_id}: '{text}'")
-    logger.info(f"🔍 وضعیت user_data: {context.user_data}")
     
-    # --- اینجا اضافه کنید: پردازش دستورات /room_ و /join_ ---
-    # پردازش دستور /room_...
+    # ========== پردازش دستورات خاص ==========
+    # 1. پردازش دستور /room_...
     if text.startswith("/room_"):
         room_code = text.replace("/room_", "")
         if len(room_code) == 6 and room_code.isalnum():
             await show_room_ranking(update, context, room_code)
             return
     
-    # پردازش دستور /join_...
+    # 2. پردازش دستور /join_...
     elif text.startswith("/join_"):
         room_code = text.replace("/join_", "")
         if len(room_code) == 6 and room_code.isalnum():
@@ -5469,16 +5468,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 return
             
             await update.message.reply_text(
-                f"<b>🔐 ورود به اتاق #{room_code}</b>\n\n"
+                "🔐 **ورود به اتاق**\n\n"
+                f"کد اتاق: {room_code}\n"
                 f"سازنده: {room_info['creator_name'] or 'نامشخص'}\n"
                 f"تا ساعت: {room_info['end_time']}\n"
                 f"شرکت‌کنندگان: {room_info['player_count']} نفر\n\n"
-                f"⚠️ این اتاق رمز دارد.\n"
-                f"لطفا رمز ۴ رقمی را وارد کنید:",
+                "⚠️ این اتاق رمز دارد.\n"
+                "لطفا رمز ۴ رقمی را وارد کنید:",
                 reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True),
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.MARKDOWN
             )
             return
+    
+    # ========== پردازش منوهای اصلی ==========
+    # ... بقیه کد منوها
     # منوی اصلی
     if text == "🏆 رتبه‌بندی":
         await show_rankings_text(update, context, user_id)
