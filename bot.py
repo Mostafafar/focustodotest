@@ -1808,18 +1808,19 @@ def complete_study_session(session_id: int) -> Optional[Dict]:
             logger.info(f"✅ رتبه‌بندی روزانه برای کاربر {user_id} بروزرسانی شد")
         except Exception as e:
             logger.warning(f"⚠️ خطا در بروزرسانی رتبه‌بندی: {e}", exc_info=True)
+        
         # 🔴 اضافه شده: بروزرسانی اتاق‌های رقابت
         try:
-    # بررسی آیا کاربر در اتاق رقابتی فعال است
+            # بررسی آیا کاربر در اتاق رقابتی فعال است
             query = """
             SELECT rp.room_code 
             FROM room_participants rp
             JOIN competition_rooms cr ON rp.room_code = cr.room_code
             WHERE rp.user_id = %s AND cr.status = 'active'
             """
-    
+            
             active_rooms = db.execute_query(query, (user_id,), fetchall=True)
-    
+            
             if active_rooms:
                 for room in active_rooms:
                     room_code = room[0]
@@ -1828,10 +1829,10 @@ def complete_study_session(session_id: int) -> Optional[Dict]:
                         user_id, room_code, 
                         final_minutes, subject, topic
                     )
-            
-                    # ارسال هشدار رقابتی
-                    await send_competition_alerts(context, user_id, room_code, session_data)
-            
+                    
+                    # لاگ برای دیباگ
+                    logger.info(f"🏆 بروزرسانی اتاق رقابت: کاربر {user_id} در اتاق {room_code} - {final_minutes} دقیقه")
+                    
         except Exception as e:
             logger.warning(f"⚠️ خطا در بروزرسانی اتاق رقابت: {e}")
         
@@ -1854,6 +1855,83 @@ def complete_study_session(session_id: int) -> Optional[Dict]:
     except Exception as e:
         logger.error(f"❌ خطا در تکمیل جلسه مطالعه: {e}", exc_info=True)
         return None
+async def complete_study_button(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
+    """اتمام جلسه مطالعه با دکمه"""
+    if "current_session" not in context.user_data:
+        await update.message.reply_text(
+            "❌ جلسه‌ای فعال نیست.",
+            reply_markup=get_main_menu_keyboard()
+        )
+        return
+    
+    session_id = context.user_data["current_session"]
+    jobs = context.job_queue.get_jobs_by_name(str(session_id))
+    for job in jobs:
+        job.schedule_removal()
+        logger.info(f"⏰ تایمر جلسه {session_id} لغو شد")
+    
+    session = complete_study_session(session_id)
+    
+    if session:
+        date_str, time_str = get_iran_time()
+        score = calculate_score(session["minutes"])
+        
+        rank, total_minutes = get_user_rank_today(user_id)
+        
+        rank_text = f"🏆 رتبه شما امروز: {rank}" if rank else ""
+        
+        time_info = ""
+        if session.get("planned_minutes") != session["minutes"]:
+            time_info = f"⏱ زمان واقعی: {format_time(session['minutes'])} (از {format_time(session['planned_minutes'])})"
+        else:
+            time_info = f"⏱ مدت: {format_time(session['minutes'])}"
+        
+        await update.message.reply_text(
+            f"✅ مطالعه تکمیل شد!\n\n"
+            f"📚 درس: {session['subject']}\n"
+            f"🎯 مبحث: {session['topic']}\n"
+            f"{time_info}\n"
+            f"🏆 امتیاز: +{score}\n"
+            f"📅 تاریخ: {date_str}\n"
+            f"🕒 زمان: {time_str}\n\n"
+            f"{rank_text}",
+            reply_markup=get_after_study_keyboard()
+        )
+        
+        context.user_data["last_subject"] = session['subject']
+        
+        # 🔴 اضافه شده: بررسی و اعطای پاداش (از قبل موجود)
+        await check_and_reward_user(user_id, session_id, context)
+        
+        # 🔴 اضافه شده: ارسال هشدارهای رقابتی
+        try:
+            # بررسی اتاق‌های فعال کاربر
+            query = """
+            SELECT rp.room_code 
+            FROM room_participants rp
+            JOIN competition_rooms cr ON rp.room_code = cr.room_code
+            WHERE rp.user_id = %s AND cr.status = 'active'
+            """
+            
+            active_rooms = db.execute_query(query, (user_id,), fetchall=True)
+            
+            if active_rooms:
+                for room in active_rooms:
+                    room_code = room[0]
+                    # ارسال هشدار رقابتی
+                    await send_competition_alerts(context, user_id, room_code, session)
+                    
+        except Exception as e:
+            logger.error(f"❌ خطا در ارسال هشدار رقابتی: {e}")
+        
+    else:
+        await update.message.reply_text(
+            "❌ خطا در ثبت اطلاعات.",
+            reply_markup=get_main_menu_keyboard()
+        )
+    
+    context.user_data.pop("current_session", None)
+
 def get_user_sessions(user_id: int, limit: int = 10) -> List[Dict]:
     """دریافت جلسات اخیر کاربر"""
     try:
