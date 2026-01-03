@@ -7598,6 +7598,8 @@ def main() -> None:
         
         print("   2 دستور نیم‌کوپن ثبت شد")
         # دستورات رقابت
+        application.add_handler(CommandHandler("room", room_command_handler))
+        application.add_handler(CommandHandler("join", join_command_handler))
         
         
         print("\n" + "=" * 70)
