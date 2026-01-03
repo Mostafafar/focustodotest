@@ -4412,8 +4412,32 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
             return
     
-    # ادامه کد قبلی...
+            # ادامه کد قبلی...
+            # بررسی آیا کاربر با لینک دعوت اتاق آمده
+        elif context.args and context.args[0].startswith("join_"):
+            room_code = context.args[0].replace("join_", "")
     
+    # دریافت اطلاعات اتاق
+            room_info = get_room_info(room_code)
+    
+            if not room_info:
+                await update.message.reply_text("❌ اتاق یافت نشد.")
+                return
+    
+            # ذخیره room_code برای مرحله بعد
+            context.user_data["joining_room"] = room_code
+    
+            await update.message.reply_text(
+                f"🔐 **ورود به اتاق #{room_code}**\n\n"
+                f"سازنده: {room_info['creator_name'] or 'نامشخص'}\n"
+                f"تا ساعت: {room_info['end_time']}\n"
+                f"شرکت‌کنندگان: {room_info['player_count']} نفر\n\n"
+                f"⚠️ این اتاق رمز دارد.\n"
+                f"لطفا رمز ۴ رقمی را وارد کنید:",
+                reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True),
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
     
     # بقیه کد بدون تغییر...
     
