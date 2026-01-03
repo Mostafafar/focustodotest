@@ -5321,6 +5321,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     elif text == "🎫 کوپن":
         await coupon_menu_handler(update, context)
         return
+    elif text == "🏆 رقابت گروهی":
+        await competition_menu_handler(update, context)
+        return
         
     elif text == "🏠 منوی اصلی" or text == "🔙 بازگشت":
         # پاک کردن تمام حالت‌های مربوط به منابع
@@ -5477,6 +5480,83 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # مدیریت کوپن کاربر
     elif text == "🎫 کوپن‌های من":
         await show_user_coupons(update, context, user_id)
+        return
+    # منوی رقابت
+
+
+# زیرمنوهای رقابت
+    elif text == "🏆 ساخت رقابت جدید":
+        await create_competition_handler(update, context)
+        return
+
+    elif text == "🔗 پیوستن به رقابت":
+        await update.message.reply_text(
+            "برای پیوستن به رقابت، لینک دعوت رو از دوستت بگیر\n"
+            "یا اگر کد اتاق رو داری، دستور زیر رو وارد کن:\n"
+            "/join <کد_اتاق>\n\n"
+            "مثال: /join ABC123"
+        )
+        return
+ 
+    elif text == "📊 اتاق‌های من":
+        await show_my_rooms(update, context, user_id)
+        return
+
+# پردازش انتخاب زمان پایان
+    if context.user_data.get("creating_competition") and text in ["🕐 ۱۸:۰۰", "🕐 ۱۹:۰۰", "🕐 ۲۰:۰۰", "🕐 ۲۱:۰۰", "🕐 ۲۲:۰۰", "✏️ زمان دلخواه"]:
+        await handle_end_time_selection(update, context, text)
+        return
+
+    # پردازش رمز اتاق
+    elif context.user_data.get("awaiting_password"):
+        await handle_competition_password(update, context, text)
+        return
+
+# پردازش زمان دلخواه
+    elif context.user_data.get("awaiting_custom_time"):
+        if ":" in text and text.replace(":", "").isdigit():
+            context.user_data["competition_end_time"] = text
+            context.user_data["awaiting_password"] = True
+            context.user_data.pop("awaiting_custom_time", None)
+        
+            await update.message.reply_text(
+                f"🕒 ساعت پایان: **{text}**\n\n"
+                f"🔐 **رمز ۴ رقمی برای اتاق وارد کنید:**",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True)
+            )
+        else:
+            await update.message.reply_text("❌ فرمت زمان نامعتبر. مثال: 20:30")
+        return
+
+# پردازش رمز ورود به اتاق
+    elif context.user_data.get("joining_room"):
+        room_code = context.user_data["joining_room"]
+    
+        if join_competition_room(room_code, user_id, text):
+            await update.message.reply_text(
+                f"✅ **وارد اتاق شدی!**\n\n"
+                f"🏷 کد اتاق: `{room_code}`\n"
+                f"🕒 تا ساعت: لودینگ...\n"
+                f"👥 حالا {get_room_info(room_code)['player_count']} نفریم\n\n"
+                f"برای مشاهده رتبه‌بندی:\n"
+                f"/room_{room_code}",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_competition_keyboard()
+            )
+        else:
+            await update.message.reply_text(
+                "❌ رمز اشتباه است یا اتاق وجود ندارد.",
+                reply_markup=get_competition_keyboard()
+            )
+    
+        context.user_data.pop("joining_room", None)
+        return
+
+    # مشاهده رتبه‌بندی اتاق
+    elif text.startswith("/room_"):
+        room_code = text.replace("/room_", "")
+        await show_room_ranking(update, context, room_code)
         return
 
 # و در بخش پردازش عکس فیش:
