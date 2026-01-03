@@ -1808,6 +1808,32 @@ def complete_study_session(session_id: int) -> Optional[Dict]:
             logger.info(f"✅ رتبه‌بندی روزانه برای کاربر {user_id} بروزرسانی شد")
         except Exception as e:
             logger.warning(f"⚠️ خطا در بروزرسانی رتبه‌بندی: {e}", exc_info=True)
+        # 🔴 اضافه شده: بروزرسانی اتاق‌های رقابت
+        try:
+    # بررسی آیا کاربر در اتاق رقابتی فعال است
+            query = """
+            SELECT rp.room_code 
+            FROM room_participants rp
+            JOIN competition_rooms cr ON rp.room_code = cr.room_code
+            WHERE rp.user_id = %s AND cr.status = 'active'
+            """
+    
+            active_rooms = db.execute_query(query, (user_id,), fetchall=True)
+    
+            if active_rooms:
+                for room in active_rooms:
+                    room_code = room[0]
+                    # بروزرسانی مطالعه کاربر در اتاق
+                    update_user_study_in_room(
+                        user_id, room_code, 
+                        final_minutes, subject, topic
+                    )
+            
+                    # ارسال هشدار رقابتی
+                    await send_competition_alerts(context, user_id, room_code, session_data)
+            
+        except Exception as e:
+            logger.warning(f"⚠️ خطا در بروزرسانی اتاق رقابت: {e}")
         
         session_data = {
             "user_id": user_id,
@@ -1863,7 +1889,69 @@ def get_user_sessions(user_id: int, limit: int = 10) -> List[Dict]:
 # -----------------------------------------------------------
 # سیستم رتبه‌بندی
 # -----------------------------------------------------------
-
+async def send_competition_alerts(context: ContextTypes.DEFAULT_TYPE, user_id: int, room_code: str, session_data: Dict) -> None:
+    """ارسال هشدارهای رقابتی"""
+    try:
+        # دریافت رتبه‌بندی جدید
+        rankings = get_room_ranking(room_code)
+        
+        # یافتن کاربر در رتبه‌بندی
+        user_rank = None
+        for rank in rankings:
+            if rank["user_id"] == user_id:
+                user_rank = rank["rank"]
+                break
+        
+        if not user_rank:
+            return
+        
+        # دریافت رتبه قبلی کاربر
+        query = """
+        SELECT last_rank FROM room_participants
+        WHERE user_id = %s AND room_code = %s
+        """
+        result = db.execute_query(query, (user_id, room_code), fetch=True)
+        
+        old_rank = result[0] if result else None
+        
+        # بروزرسانی رتبه آخر
+        query_update = """
+        UPDATE room_participants
+        SET last_rank = %s
+        WHERE user_id = %s AND room_code = %s
+        """
+        db.execute_query(query_update, (user_rank, user_id, room_code))
+        
+        # ارسال هشدار اگر رتبه تغییر کرد
+        if old_rank and old_rank != user_rank:
+            if user_rank < old_rank:  # ارتقا رتبه
+                message = f"🎉 **صعود کردی!**\nرتبه {old_rank} → {user_rank}"
+                try:
+                    await context.bot.send_message(user_id, message, parse_mode=ParseMode.MARKDOWN)
+                except:
+                    pass
+            elif user_rank > old_rank:  # نزول رتبه
+                message = f"⚠️ **عقب افتادی!**\nرتبه {old_rank} → {user_rank}"
+                try:
+                    await context.bot.send_message(user_id, message, parse_mode=ParseMode.MARKDOWN)
+                except:
+                    pass
+        
+        # هشدار نزدیکی به نفر اول
+        if user_rank > 1 and len(rankings) > 0:
+            first_place = rankings[0]
+            user_minutes = session_data["minutes"]
+            gap = first_place["total_minutes"] - user_minutes
+            
+            if 0 < gap <= 30:  # کمتر از ۳۰ دقیقه فاصله
+                message = f"🚀 **نزدیکی!**\nفقط {gap} دقیقه با نفر اول فاصله داری!"
+                try:
+                    await context.bot.send_message(user_id, message, parse_mode=ParseMode.MARKDOWN)
+                except:
+                    pass
+        
+    except Exception as e:
+        logger.error(f"خطا در ارسال هشدار رقابتی: {e}")
 def get_today_rankings() -> List[Dict]:
     """دریافت رتبه‌بندی امروز"""
     try:
@@ -6896,6 +6984,47 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # -----------------------------------------------------------
 # تابع اصلی
 # -----------------------------------------------------------
+async def check_competition_rooms_job(context: ContextTypes.DEFAULT_TYPE):
+    """بررسی اتاق‌های تمام‌شده"""
+    try:
+        finished_rooms = check_and_finish_rooms()
+        
+        for room_info in finished_rooms:
+            room_code = room_info["room_code"]
+            winner_info = room_info["winner_info"]
+            
+            # دریافت همه شرکت‌کنندگان
+            query = """
+            SELECT user_id FROM room_participants
+            WHERE room_code = %s
+            """
+            participants = db.execute_query(query, (room_code,), fetchall=True)
+            
+            if participants:
+                # ارسال پیام به همه
+                message = f"⏰ **رقابت #{room_code} به پایان رسید!**\n\n"
+                
+                # اضافه کردن اطلاعات برنده
+                if winner_info:
+                    message += f"🏆 **برنده:** کاربر {winner_info['winner_id']}\n"
+                    message += f"🎫 **جایزه:** کوپن {winner_info['coupon_code']}\n\n"
+                
+                message += "🎉 به همه شرکت‌کنندگان ۵۰ امتیاز تعلق گرفت!\n"
+                message += "برای رقابت جدید به منوی رقابت مراجعه کنید."
+                
+                for participant in participants:
+                    user_id = participant[0]
+                    try:
+                        await context.bot.send_message(
+                            user_id,
+                            message,
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                    except Exception as e:
+                        logger.error(f"خطا در ارسال به کاربر {user_id}: {e}")
+                        
+    except Exception as e:
+        logger.error(f"خطا در Job بررسی اتاق‌ها: {e}")
 def escape_html_for_telegram(text: str) -> str:
     """فرار کردن کاراکترهای مخصوص برای HTML تلگرام"""
     return html.escape(text)
@@ -6945,6 +7074,15 @@ def main() -> None:
         first=10,
         name="periodic_encouragement"
     )
+    # Job برای بررسی اتاق‌های تمام‌شده (هر ۵ دقیقه)
+    application.job_queue.run_repeating(
+        lambda context: check_competition_rooms_job(context),
+        interval=300,  # هر ۵ دقیقه
+        first=10,
+        name="check_competition_rooms"
+    )
+
+
     
     # ... بقیه کدهای main() بدون تغییر ...
     
