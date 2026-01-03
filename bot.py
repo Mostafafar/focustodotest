@@ -7320,13 +7320,15 @@ async def join_room_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def show_my_rooms(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
     """نمایش اتاق‌های کاربر"""
     try:
+        # دریافت اتاق‌های کاربر
         query = """
-        SELECT cr.room_code, cr.end_time, cr.status,
-               COUNT(rp.user_id) as player_count
+        SELECT cr.room_code, cr.end_time, cr.status, 
+               COUNT(rp.user_id) as player_count,
+               cr.created_at
         FROM room_participants rp
         JOIN competition_rooms cr ON rp.room_code = cr.room_code
         WHERE rp.user_id = %s
-        GROUP BY cr.room_code, cr.end_time, cr.status
+        GROUP BY cr.room_code, cr.end_time, cr.status, cr.created_at
         ORDER BY cr.created_at DESC
         LIMIT 10
         """
@@ -7335,46 +7337,65 @@ async def show_my_rooms(update: Update, context: ContextTypes.DEFAULT_TYPE, user
         
         if not results:
             await update.message.reply_text(
-                "📭 شما در هیچ اتاقی نیستید.",
+                "📭 شما در هیچ اتاق رقابتی عضو نیستید.",
                 reply_markup=get_competition_keyboard()
             )
             return
         
-        text = "🏆 **اتاق‌های شما**\n\n"
+        text = "<b>🏆 اتاق‌های شما</b>\n\n"
         
         for row in results:
-            room_code, end_time, status, player_count = row
+            room_code, end_time, status, player_count, created_at = row
             
+            # وضعیت اتاق
             status_emoji = {
                 'waiting': '⏳',
                 'active': '🔥',
                 'finished': '✅'
             }.get(status, '❓')
             
-            text += f"{status_emoji} **اتاق #{room_code}**\n"
-            text += f"🕒 تا: {end_time} | 👥 {player_count} نفر\n"
-            text += f"📊 وضعیت: "
+            status_text = {
+                'waiting': 'در انتظار',
+                'active': 'فعال',
+                'finished': 'اتمام'
+            }.get(status, 'نامشخص')
             
-            if status == 'waiting':
-                text += f"منتظر {5 - player_count} نفر دیگر\n"
-            elif status == 'active':
-                text += f"فعال - رقابت در جریان\n"
+            # تاریخ ایجاد
+            if isinstance(created_at, datetime):
+                created_str = created_at.strftime("%H:%M")
             else:
-                text += f"تمام شده\n"
+                created_str = str(created_at)
             
-            text += f"🔍 مشاهده: /room_{room_code}\n"
+            text += f"<b>{status_emoji} اتاق {room_code}</b>\n"
+            text += f"🕒 تا: {end_time}\n"
+            text += f"👥 {player_count} نفر | وضعیت: {status_text}\n"
+            text += f"🕐 ایجاد: {created_str}\n"
+            
+            # دکمه‌های عملیاتی
+            if status == 'waiting':
+                text += f"🔗 برای دعوت دوستان:\n"
+                text += f"<code>/join_{room_code}</code>\n"
+            elif status == 'active':
+                text += f"📊 مشاهده رتبه‌بندی:\n"
+                text += f"<code>/room_{room_code}</code>\n"
+            elif status == 'finished':
+                text += f"🏆 نتیجه: /room_{room_code}\n"
+            
             text += "─" * 15 + "\n"
         
         await update.message.reply_text(
             text,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_competition_keyboard()
         )
         
     except Exception as e:
-        logger.error(f"خطا در نمایش اتاق‌های کاربر: {e}")
+        logger.error(f"خطا در نمایش اتاق‌های کاربر: {e}", exc_info=True)
+        # نسخه ساده بدون HTML در صورت خطا
         await update.message.reply_text(
-            "❌ خطا در دریافت اطلاعات.",
+            f"🏆 اتاق‌های شما:\n\n"
+            f"برای مشاهده رتبه‌بندی اتاق‌ها از دستور /room_کد_اتاق استفاده کنید.\n\n"
+            f"مثال: /room_EJ2PJN",
             reply_markup=get_competition_keyboard()
         )
         
