@@ -2714,7 +2714,280 @@ async def handle_study_coupon_earning(update: Update, context: ContextTypes.DEFA
 # 13. دستورات ادمین جدید
 # -----------------------------------------------------------
 
+def create_competition_room(creator_id: int, end_time: str, password: str) -> Optional[str]:
+    """ایجاد اتاق رقابت جدید"""
+    try:
+        room_code = generate_room_code()
+        
+        query = """
+        INSERT INTO competition_rooms (room_code, creator_id, password, end_time, status)
+        VALUES (%s, %s, %s, %s, 'waiting')
+        RETURNING room_code
+        """
+        
+        result = db.execute_query(query, (room_code, creator_id, password, end_time), fetch=True)
+        
+        if result:
+            # سازنده اتاق را به عنوان اولین شرکت‌کننده اضافه کن
+            query2 = """
+            INSERT INTO room_participants (room_code, user_id)
+            VALUES (%s, %s)
+            """
+            db.execute_query(query2, (room_code, creator_id))
+            
+            return room_code
+        return None
+        
+    except Exception as e:
+        logger.error(f"خطا در ایجاد اتاق رقابت: {e}")
+        return None
 
+def join_competition_room(room_code: str, user_id: int, password: str) -> bool:
+    """پیوستن به اتاق رقابت"""
+    try:
+        # بررسی وجود اتاق و رمز
+        query = """
+        SELECT room_code FROM competition_rooms 
+        WHERE room_code = %s AND password = %s AND status != 'finished'
+        """
+        result = db.execute_query(query, (room_code, password), fetch=True)
+        
+        if not result:
+            return False
+        
+        # بررسی آیا کاربر قبلاً عضو شده
+        query_check = """
+        SELECT user_id FROM room_participants 
+        WHERE room_code = %s AND user_id = %s
+        """
+        check = db.execute_query(query_check, (room_code, user_id), fetch=True)
+        
+        if check:
+            return True  # قبلاً عضو است
+        
+        # اضافه کردن کاربر به اتاق
+        query_join = """
+        INSERT INTO room_participants (room_code, user_id)
+        VALUES (%s, %s)
+        """
+        db.execute_query(query_join, (room_code, user_id))
+        
+        # بررسی آیا حداقل تعداد رسیده
+        query_count = """
+        SELECT COUNT(*) FROM room_participants WHERE room_code = %s
+        """
+        count = db.execute_query(query_count, (room_code,), fetch=True)
+        
+        if count and count[0] >= 5:
+            # شروع رقابت
+            query_start = """
+            UPDATE competition_rooms 
+            SET status = 'active' 
+            WHERE room_code = %s
+            """
+            db.execute_query(query_start, (room_code,))
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"خطا در پیوستن به اتاق: {e}")
+        return False
+
+def get_room_info(room_code: str) -> Optional[Dict]:
+    """دریافت اطلاعات اتاق"""
+    try:
+        query = """
+        SELECT cr.room_code, cr.creator_id, cr.end_time, cr.status,
+               cr.created_at, u.username as creator_name,
+               COUNT(rp.user_id) as player_count
+        FROM competition_rooms cr
+        JOIN users u ON cr.creator_id = u.user_id
+        LEFT JOIN room_participants rp ON cr.room_code = rp.room_code
+        WHERE cr.room_code = %s
+        GROUP BY cr.room_code, cr.creator_id, cr.end_time, cr.status,
+                 cr.created_at, u.username
+        """
+        
+        result = db.execute_query(query, (room_code,), fetch=True)
+        
+        if result:
+            return {
+                "room_code": result[0],
+                "creator_id": result[1],
+                "end_time": result[2],
+                "status": result[3],
+                "created_at": result[4],
+                "creator_name": result[5],
+                "player_count": result[6]
+            }
+        return None
+        
+    except Exception as e:
+        logger.error(f"خطا در دریافت اطلاعات اتاق: {e}")
+        return None
+
+def get_room_ranking(room_code: str) -> List[Dict]:
+    """دریافت رتبه‌بندی اتاق"""
+    try:
+        query = """
+        SELECT rp.user_id, u.username, rp.total_minutes, 
+               rp.current_subject, rp.current_topic,
+               RANK() OVER (ORDER BY rp.total_minutes DESC) as rank
+        FROM room_participants rp
+        JOIN users u ON rp.user_id = u.user_id
+        WHERE rp.room_code = %s
+        ORDER BY rp.total_minutes DESC
+        LIMIT 20
+        """
+        
+        results = db.execute_query(query, (room_code,), fetchall=True)
+        
+        rankings = []
+        for row in results:
+            rankings.append({
+                "user_id": row[0],
+                "username": row[1],
+                "total_minutes": row[2] or 0,
+                "current_subject": row[3] or "",
+                "current_topic": row[4] or "",
+                "rank": row[5]
+            })
+        
+        return rankings
+        
+    except Exception as e:
+        logger.error(f"خطا در دریافت رتبه‌بندی اتاق: {e}")
+        return []
+
+def update_user_study_in_room(user_id: int, room_code: str, minutes: int, 
+                             subject: str, topic: str) -> bool:
+    """به‌روزرسانی مطالعه کاربر در اتاق"""
+    try:
+        query = """
+        UPDATE room_participants
+        SET total_minutes = total_minutes + %s,
+            current_subject = %s,
+            current_topic = %s
+        WHERE user_id = %s AND room_code = %s
+        """
+        
+        db.execute_query(query, (minutes, subject, topic, user_id, room_code))
+        return True
+        
+    except Exception as e:
+        logger.error(f"خطا در به‌روزرسانی مطالعه اتاق: {e}")
+        return False
+
+def get_user_room_info(user_id: int, room_code: str) -> Optional[Dict]:
+    """دریافت اطلاعات کاربر در اتاق"""
+    try:
+        query = """
+        SELECT rp.total_minutes, rp.current_subject, rp.current_topic,
+               rp.last_rank, cr.end_time, cr.status,
+               (SELECT COUNT(*) FROM room_participants WHERE room_code = %s) as total_players
+        FROM room_participants rp
+        JOIN competition_rooms cr ON rp.room_code = cr.room_code
+        WHERE rp.user_id = %s AND rp.room_code = %s
+        """
+        
+        result = db.execute_query(query, (room_code, user_id, room_code), fetch=True)
+        
+        if result:
+            return {
+                "total_minutes": result[0] or 0,
+                "current_subject": result[1] or "",
+                "current_topic": result[2] or "",
+                "last_rank": result[3],
+                "end_time": result[4],
+                "room_status": result[5],
+                "total_players": result[6] or 0
+            }
+        return None
+        
+    except Exception as e:
+        logger.error(f"خطا در دریافت اطلاعات کاربر در اتاق: {e}")
+        return None
+
+def generate_room_code() -> str:
+    """تولید کد اتاق"""
+    import random
+    import string
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+def award_room_winner(room_code: str) -> Optional[Dict]:
+    """اعطای جایزه به برنده اتاق"""
+    try:
+        # دریافت نفر اول
+        query = """
+        SELECT user_id FROM room_participants
+        WHERE room_code = %s
+        ORDER BY total_minutes DESC
+        LIMIT 1
+        """
+        
+        result = db.execute_query(query, (room_code,), fetch=True)
+        
+        if not result:
+            return None
+        
+        winner_id = result[0]
+        
+        # ایجاد کوپن برای برنده
+        coupon = create_coupon(winner_id, "competition_winner")
+        
+        if coupon:
+            return {
+                "winner_id": winner_id,
+                "coupon_code": coupon["coupon_code"],
+                "value": coupon["value"]
+            }
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"خطا در اعطای جایزه اتاق: {e}")
+        return None
+
+def check_and_finish_rooms():
+    """بررسی و اتمام اتاق‌های تمام‌شده"""
+    try:
+        now = datetime.now(IRAN_TZ)
+        current_time = now.strftime("%H:%M")
+        
+        # دریافت اتاق‌های فعالی که زمانشان گذشته
+        query = """
+        SELECT room_code FROM competition_rooms
+        WHERE status = 'active' AND end_time <= %s
+        """
+        
+        results = db.execute_query(query, (current_time,), fetchall=True)
+        
+        finished_rooms = []
+        if results:
+            for row in results:
+                room_code = row[0]
+                
+                # تغییر وضعیت به اتمام
+                query_update = """
+                UPDATE competition_rooms
+                SET status = 'finished'
+                WHERE room_code = %s
+                """
+                db.execute_query(query_update, (room_code,))
+                
+                # اعطای جایزه به برنده
+                winner_info = award_room_winner(room_code)
+                
+                finished_rooms.append({
+                    "room_code": room_code,
+                    "winner_info": winner_info
+                })
+        
+        return finished_rooms
+        
+    except Exception as e:
+        logger.error(f"خطا در بررسی اتاق‌ها: {e}")
+        return []
 
 async def set_card_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """دستور تغییر شماره کارت ادمین"""
