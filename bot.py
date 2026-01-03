@@ -2997,13 +2997,16 @@ async def handle_competition_password(update: Update, context: ContextTypes.DEFA
             f"🔗 **لینک دعوت:**\n"
             f"`{invite_link}`\n\n"
             f"📋 **دستورات مدیریت:**\n"
-            f"برای مشاهده رتبه‌بندی: /room_{room_code}",
+            f"برای مشاهده رتبه‌بندی: /room_{room_code}\n\n"
+            f"👥 **اعضای اتاق:**\n"
+            f"✅ شما (سازنده)",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=get_competition_keyboard()
         )
     else:
         await update.message.reply_text(
-            "❌ خطا در ایجاد اتاق.",
+            "❌ خطا در ایجاد اتاق.\n"
+            "ممکن است کد اتاق تکراری باشد یا مشکلی در دیتابیس وجود داشته باشد.",
             reply_markup=get_competition_keyboard()
         )
     
