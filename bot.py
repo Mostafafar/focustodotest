@@ -2232,7 +2232,8 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
         ["➕ ثبت مطالعه"],
         ["📚 منابع"],
         ["🎫 کوپن"],
-        ["🏆 رتبه‌بندی"]
+        ["🏆 رقابت گروهی"],  # 🔴 اضافه شد
+        ["🏅 رتبه‌بندی"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 def get_subjects_keyboard_reply() -> ReplyKeyboardMarkup:
@@ -2327,7 +2328,34 @@ def get_complete_study_keyboard() -> ReplyKeyboardMarkup:
     """کیبورد اتمام مطالعه"""
     keyboard = [[KeyboardButton("✅ اتمام مطالعه")]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+def get_competition_keyboard() -> ReplyKeyboardMarkup:
+    """کیبورد رقابت گروهی"""
+    keyboard = [
+        ["🏆 ساخت رقابت جدید"],
+        ["🔗 پیوستن به رقابت"],
+        ["📊 اتاق‌های من"],
+        ["🔙 بازگشت"]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
+def get_end_time_keyboard() -> ReplyKeyboardMarkup:
+    """کیبورد انتخاب زمان پایان"""
+    keyboard = [
+        ["🕐 ۱۸:۰۰", "🕐 ۱۹:۰۰", "🕐 ۲۰:۰۰"],
+        ["🕐 ۲۱:۰۰", "🕐 ۲۲:۰۰", "✏️ زمان دلخواه"],
+        ["🔙 بازگشت"]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+def get_room_management_keyboard() -> ReplyKeyboardMarkup:
+    """کیبورد مدیریت اتاق"""
+    keyboard = [
+        ["📊 مشاهده رتبه‌بندی"],
+        ["👥 لیست شرکت‌کنندگان"],
+        ["🏁 پایان دادن"],
+        ["🔙 بازگشت"]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 # -----------------------------------------------------------
 # هندلرهای دستورات
 # -----------------------------------------------------------
@@ -2713,7 +2741,190 @@ async def handle_study_coupon_earning(update: Update, context: ContextTypes.DEFA
 # -----------------------------------------------------------
 # 13. دستورات ادمین جدید
 # -----------------------------------------------------------
+async def competition_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """منوی رقابت گروهی"""
+    user_id = update.effective_user.id
+    
+    if not is_user_active(user_id):
+        await update.message.reply_text("❌ حساب شما فعال نیست.")
+        return
+    
+    await update.message.reply_text(
+        "🏆 **سیستم رقابت گروهی**\n\n"
+        "با دوستانت رقابت کن و جایزه ببر!\n\n"
+        "📋 شرایط:\n"
+        "• حداقل ۵ نفر\n"
+        "• هر اتاق یک رمز دارد\n"
+        "• نفر اول ۱ کوپن کامل می‌گیرد\n"
+        "• رتبه‌بندی لحظه‌ای\n"
+        "• هشدار رقابتی\n\n"
+        "لطفا انتخاب کنید:",
+        reply_markup=get_competition_keyboard(),
+        parse_mode=ParseMode.MARKDOWN
+    )
 
+async def create_competition_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ایجاد رقابت جدید"""
+    user_id = update.effective_user.id
+    context.user_data["creating_competition"] = True
+    
+    await update.message.reply_text(
+        "🕒 **ساعت پایان رقابت**\n\n"
+        "لطفا ساعت پایان رو انتخاب کنید:",
+        reply_markup=get_end_time_keyboard()
+    )
+
+async def handle_end_time_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, end_time: str) -> None:
+    """پردازش انتخاب زمان پایان"""
+    user_id = update.effective_user.id
+    
+    if end_time == "✏️ زمان دلخواه":
+        await update.message.reply_text(
+            "⏰ زمان دلخواه را به فرمت زیر وارد کنید:\n"
+            "مثال: 20:30 یا 21:15"
+        )
+        context.user_data["awaiting_custom_time"] = True
+        return
+    
+    # حذف ایموجی از زمان
+    clean_time = end_time.replace("🕐 ", "")
+    context.user_data["competition_end_time"] = clean_time
+    context.user_data["awaiting_password"] = True
+    
+    await update.message.reply_text(
+        f"🕒 ساعت پایان: **{clean_time}**\n\n"
+        f"🔐 **رمز ۴ رقمی برای اتاق وارد کنید:**\n"
+        f"(این رمز رو به دوستانت بده تا بتونن بیایند)",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True)
+    )
+
+async def handle_competition_password(update: Update, context: ContextTypes.DEFAULT_TYPE, password: str) -> None:
+    """پردازش رمز اتاق"""
+    user_id = update.effective_user.id
+    
+    if not password.isdigit() or len(password) != 4:
+        await update.message.reply_text(
+            "❌ رمز باید ۴ رقم باشد.\n"
+            "لطفا مجدد وارد کنید:"
+        )
+        return
+    
+    end_time = context.user_data.get("competition_end_time")
+    if not end_time:
+        await update.message.reply_text("❌ خطا در اطلاعات.")
+        return
+    
+    # ایجاد اتاق
+    room_code = create_competition_room(user_id, end_time, password)
+    
+    if room_code:
+        # ایجاد لینک دعوت
+        invite_link = f"https://t.me/{context.bot.username}?start=join_{room_code}"
+        
+        await update.message.reply_text(
+            f"✅ **اتاق رقابت ساخته شد!**\n\n"
+            f"🏷 کد اتاق: `{room_code}`\n"
+            f"🔐 رمز: `{password}`\n"
+            f"🕒 تا ساعت: `{end_time}`\n"
+            f"👥 حداقل: ۵ نفر\n\n"
+            f"🔗 **لینک دعوت:**\n"
+            f"`{invite_link}`\n\n"
+            f"📋 **دستورات مدیریت:**\n"
+            f"برای مشاهده رتبه‌بندی: /room_{room_code}",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_competition_keyboard()
+        )
+    else:
+        await update.message.reply_text(
+            "❌ خطا در ایجاد اتاق.",
+            reply_markup=get_competition_keyboard()
+        )
+    
+    # پاک کردن اطلاعات
+    context.user_data.pop("creating_competition", None)
+    context.user_data.pop("competition_end_time", None)
+    context.user_data.pop("awaiting_password", None)
+
+async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, room_code: str) -> None:
+    """نمایش رتبه‌بندی اتاق"""
+    user_id = update.effective_user.id
+    
+    # بررسی آیا کاربر در اتاق است
+    user_room_info = get_user_room_info(user_id, room_code)
+    if not user_room_info:
+        await update.message.reply_text("❌ شما در این اتاق نیستید.")
+        return
+    
+    room_info = get_room_info(room_code)
+    if not room_info:
+        await update.message.reply_text("❌ اتاق یافت نشد.")
+        return
+    
+    rankings = get_room_ranking(room_code)
+    
+    # ساخت پیام
+    text = f"🏆 **اتاق #{room_code}**\n"
+    text += f"🕒 تا ساعت: {room_info['end_time']}\n"
+    text += f"👥 شرکت‌کنندگان: {room_info['player_count']} نفر\n"
+    text += f"📊 وضعیت: {'فعال' if room_info['status'] == 'active' else 'در انتظار'}\n\n"
+    
+    if room_info['status'] != 'active':
+        text += f"⏳ منتظر {5 - room_info['player_count']} نفر دیگر...\n\n"
+    
+    text += "🏅 **رتبه‌بندی لحظه‌ای:**\n\n"
+    
+    for rank in rankings[:10]:  # فقط ۱۰ نفر اول
+        medal = ""
+        if rank["rank"] == 1:
+            medal = "🥇"
+        elif rank["rank"] == 2:
+            medal = "🥈"
+        elif rank["rank"] == 3:
+            medal = "🥉"
+        else:
+            medal = f"{rank['rank']}."
+        
+        username = rank["username"] or "کاربر"
+        if username == "None":
+            username = "کاربر"
+        
+        # نمایش درس فعلی
+        subject_display = f" | 📚 {rank['current_subject']}" if rank["current_subject"] else ""
+        
+        # اگر کاربر جاری هستیم
+        is_you = " 👈 شما" if rank["user_id"] == user_id else ""
+        
+        text += f"{medal} **{username}** ({rank['total_minutes']}د){subject_display}{is_you}\n"
+    
+    # اطلاعات کاربر جاری
+    if user_room_info:
+        current_rank = next((r["rank"] for r in rankings if r["user_id"] == user_id), None)
+        if current_rank:
+            text += f"\n🎯 **موقعیت شما:** رتبه {current_rank}\n"
+            
+            # هشدار رقابتی
+            if current_rank > 1 and len(rankings) > 0:
+                first_place = rankings[0]
+                gap = first_place["total_minutes"] - user_room_info["total_minutes"]
+                if gap > 0:
+                    text += f"🔥 {gap} دقیقه با نفر اول فاصله داری!\n"
+            
+            if current_rank > 1 and current_rank <= 10:
+                above_you = rankings[current_rank - 2]  # نفر بالاتر
+                gap_to_above = above_you["total_minutes"] - user_room_info["total_minutes"]
+                if gap_to_above > 0:
+                    text += f"⚡ {gap_to_above} دقیقه تا رتبه {current_rank - 1}\n"
+    
+    # هشدار زمان
+    if room_info['status'] == 'active':
+        text += f"\n⏰ هر لحظه می‌تونی رتبه‌ت رو بهتر کنی!"
+    
+    await update.message.reply_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_competition_keyboard()
+    )
 def create_competition_room(creator_id: int, end_time: str, password: str) -> Optional[str]:
     """ایجاد اتاق رقابت جدید"""
     try:
