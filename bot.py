@@ -2985,22 +2985,31 @@ async def handle_competition_password(update: Update, context: ContextTypes.DEFA
     room_code = create_competition_room(user_id, end_time, password)
     
     if room_code:
+        # دریافت اطلاعات کاربر
+        user_info = get_user_info(user_id)
+        username = user_info["username"] if user_info else "شما"
+        
         # ایجاد لینک دعوت
         invite_link = f"https://t.me/{context.bot.username}?start=join_{room_code}"
         
-        await update.message.reply_text(
-            f"✅ **اتاق رقابت ساخته شد!**\n\n"
-            f"🏷 کد اتاق: `{room_code}`\n"
-            f"🔐 رمز: `{password}`\n"
-            f"🕒 تا ساعت: `{end_time}`\n"
-            f"👥 حداقل: ۵ نفر\n\n"
-            f"🔗 **لینک دعوت:**\n"
-            f"`{invite_link}`\n\n"
-            f"📋 **دستورات مدیریت:**\n"
+        # متن پیام با HTML - دقت کنید که تمام تگ‌ها بسته شوند
+        message_text = (
+            f"<b>✅ اتاق رقابت ساخته شد!</b>\n\n"
+            f"<b>🏷 کد اتاق:</b> <code>{room_code}</code>\n"
+            f"<b>🔐 رمز:</b> <code>{password}</code>\n"
+            f"<b>🕒 تا ساعت:</b> <code>{end_time}</code>\n"
+            f"<b>👥 حداقل:</b> ۵ نفر\n\n"
+            f"<b>🔗 لینک دعوت:</b>\n"
+            f"<code>{invite_link}</code>\n\n"
+            f"<b>📋 دستورات مدیریت:</b>\n"
             f"برای مشاهده رتبه‌بندی: /room_{room_code}\n\n"
-            f"👥 **اعضای اتاق:**\n"
-            f"✅ شما (سازنده)",
-            parse_mode=ParseMode.MARKDOWN,
+            f"<b>👥 اعضای اتاق:</b>\n"
+            f"✅ {username} (سازنده)"
+        )
+        
+        await update.message.reply_text(
+            message_text,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_competition_keyboard()
         )
     else:
