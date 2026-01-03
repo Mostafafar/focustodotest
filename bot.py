@@ -7508,8 +7508,7 @@ def main() -> None:
         application.add_handler(CommandHandler("users", users_command))
         application.add_handler(CommandHandler("send", send_command))
         application.add_handler(CommandHandler("my_coupons", my_coupons_command))
-        application.add_handler(CommandHandler("room", handle_room_command, pattern=r"room_[A-Z0-9]{6}"))
-        print("   ✓ 13 دستور اصلی ثبت شد")
+        print("   ✓ 12 دستور اصلی ثبت شد")
         
         
         # در تابع main() به بخش دستورات دیباگ اضافه کنید:
