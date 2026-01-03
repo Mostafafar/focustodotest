@@ -3024,85 +3024,106 @@ async def handle_competition_password(update: Update, context: ContextTypes.DEFA
     context.user_data.pop("competition_end_time", None)
     context.user_data.pop("awaiting_password", None)
 
-async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, room_code: str) -> None:
+async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, room_code: str = None) -> None:
     """نمایش رتبه‌بندی اتاق"""
-    user_id = update.effective_user.id
-    
-    # بررسی آیا کاربر در اتاق است
-    user_room_info = get_user_room_info(user_id, room_code)
-    if not user_room_info:
-        await update.message.reply_text("❌ شما در این اتاق نیستید.")
-        return
-    
-    room_info = get_room_info(room_code)
-    if not room_info:
-        await update.message.reply_text("❌ اتاق یافت نشد.")
-        return
-    
-    rankings = get_room_ranking(room_code)
-    
-    # ساخت پیام
-    text = f"🏆 **اتاق #{room_code}**\n"
-    text += f"🕒 تا ساعت: {room_info['end_time']}\n"
-    text += f"👥 شرکت‌کنندگان: {room_info['player_count']} نفر\n"
-    text += f"📊 وضعیت: {'فعال' if room_info['status'] == 'active' else 'در انتظار'}\n\n"
-    
-    if room_info['status'] != 'active':
-        text += f"⏳ منتظر {5 - room_info['player_count']} نفر دیگر...\n\n"
-    
-    text += "🏅 **رتبه‌بندی لحظه‌ای:**\n\n"
-    
-    for rank in rankings[:10]:  # فقط ۱۰ نفر اول
-        medal = ""
-        if rank["rank"] == 1:
-            medal = "🥇"
-        elif rank["rank"] == 2:
-            medal = "🥈"
-        elif rank["rank"] == 3:
-            medal = "🥉"
+    if not room_code:
+        # اگر از آرگومان دستور آمده
+        if context.args:
+            room_code = context.args[0]
         else:
-            medal = f"{rank['rank']}."
-        
-        username = rank["username"] or "کاربر"
-        if username == "None":
-            username = "کاربر"
-        
-        # نمایش درس فعلی
-        subject_display = f" | 📚 {rank['current_subject']}" if rank["current_subject"] else ""
-        
-        # اگر کاربر جاری هستیم
-        is_you = " 👈 شما" if rank["user_id"] == user_id else ""
-        
-        text += f"{medal} **{username}** ({rank['total_minutes']}د){subject_display}{is_you}\n"
+            # اگر از پیام متنی آمده
+            room_code = update.message.text.replace("/room_", "").strip()
     
-    # اطلاعات کاربر جاری
-    if user_room_info:
-        current_rank = next((r["rank"] for r in rankings if r["user_id"] == user_id), None)
-        if current_rank:
-            text += f"\n🎯 **موقعیت شما:** رتبه {current_rank}\n"
-            
-            # هشدار رقابتی
-            if current_rank > 1 and len(rankings) > 0:
-                first_place = rankings[0]
-                gap = first_place["total_minutes"] - user_room_info["total_minutes"]
-                if gap > 0:
-                    text += f"🔥 {gap} دقیقه با نفر اول فاصله داری!\n"
-            
-            if current_rank > 1 and current_rank <= 10:
-                above_you = rankings[current_rank - 2]  # نفر بالاتر
-                gap_to_above = above_you["total_minutes"] - user_room_info["total_minutes"]
-                if gap_to_above > 0:
-                    text += f"⚡ {gap_to_above} دقیقه تا رتبه {current_rank - 1}\n"
+    if not room_code or len(room_code) != 6:
+        await update.message.reply_text(
+            "❌ لطفا کد اتاق را وارد کنید.\n"
+            "مثال: /room_D9L9B7"
+        )
+        return
     
-    # هشدار زمان
-    if room_info['status'] == 'active':
+    user_id = update.effective_user.id
+    logger.info(f"🔍 نمایش رتبه‌بندی اتاق {room_code} برای کاربر {user_id}")
+    
+    try:
+        # بررسی آیا کاربر در اتاق است
+        user_room_info = get_user_room_info(user_id, room_code)
+        if not user_room_info:
+            await update.message.reply_text(
+                f"❌ شما در اتاق {room_code} عضو نیستید.\n\n"
+                f"برای پیوستن به اتاق:\n"
+                f"۱. لینک دعوت را از سازنده اتاق بگیرید\n"
+                f"۲. یا از دستور زیر استفاده کنید:\n"
+                f"`/join_{room_code}`"
+            )
+            return
+        
+        room_info = get_room_info(room_code)
+        if not room_info:
+            await update.message.reply_text("❌ اتاق یافت نشد.")
+            return
+        
+        rankings = get_room_ranking(room_code)
+        
+        # ساخت پیام ساده
+        text = f"🏆 **اتاق #{room_code}**\n"
+        text += f"🕒 تا ساعت: {room_info['end_time']}\n"
+        text += f"👥 شرکت‌کنندگان: {room_info['player_count']} نفر\n"
+        text += f"📊 وضعیت: {'فعال' if room_info['status'] == 'active' else 'در انتظار'}\n\n"
+        
+        if room_info['status'] != 'active':
+            text += f"⏳ منتظر {5 - room_info['player_count']} نفر دیگر...\n\n"
+        
+        text += "🏅 **رتبه‌بندی لحظه‌ای:**\n\n"
+        
+        # فقط ۵ نفر اول را نمایش بده
+        for rank in rankings[:5]:
+            medal = ""
+            if rank["rank"] == 1:
+                medal = "🥇"
+            elif rank["rank"] == 2:
+                medal = "🥈"
+            elif rank["rank"] == 3:
+                medal = "🥉"
+            else:
+                medal = f"{rank['rank']}."
+            
+            username = rank["username"] or "کاربر"
+            if username == "None":
+                username = "کاربر"
+            
+            # اگر کاربر جاری هستیم
+            is_you = " 👈 شما" if rank["user_id"] == user_id else ""
+            
+            text += f"{medal} **{username}** ({rank['total_minutes']}د){is_you}\n"
+        
+        # اطلاعات کاربر جاری
+        if user_room_info:
+            current_rank = next((r["rank"] for r in rankings if r["user_id"] == user_id), None)
+            if current_rank:
+                text += f"\n🎯 **موقعیت شما:** رتبه {current_rank}\n"
+                
+                # هشدار رقابتی
+                if current_rank > 1 and len(rankings) > 0:
+                    first_place = rankings[0]
+                    gap = first_place["total_minutes"] - user_room_info["total_minutes"]
+                    if gap > 0:
+                        text += f"🔥 {gap} دقیقه با نفر اول فاصله داری!\n"
+        
         text += f"\n⏰ هر لحظه می‌تونی رتبه‌ت رو بهتر کنی!"
-    
-    await update.message.reply_text(
-        text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=get_competition_keyboard()
-    )
+        
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_competition_keyboard()
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ خطا در نمایش رتبه‌بندی اتاق: {e}", exc_info=True)
+        await update.message.reply_text(
+            f"❌ خطا در دریافت اطلاعات اتاق {room_code}.\n"
+            "لطفا بعداً مجدد تلاش کنید.",
+            reply_markup=get_competition_keyboard()
+)
 def create_competition_room(creator_id: int, end_time: str, password: str) -> Optional[str]:
     """ایجاد اتاق رقابت جدید"""
     conn = None
