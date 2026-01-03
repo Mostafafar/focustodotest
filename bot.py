@@ -7472,25 +7472,7 @@ async def handle_room_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
     
     await show_room_ranking(update, context, room_code)
-async def room_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """مدیریت اتاق‌های رقابتی"""
-    user_id = update.effective_user.id
-    
-    if not context.args:
-        await update.message.reply_text(
-            "🏆 **مدیریت اتاق‌های رقابتی**\n\n"
-            "📋 دستورات موجود:\n"
-            "• /room <کد_اتاق> - نمایش رتبه‌بندی اتاق\n"
-            "• /join <کد_اتاق> - پیوستن به اتاق\n"
-            "• /create_room - ساخت اتاق جدید\n"
-            "• /my_rooms - نمایش اتاق‌های من\n\n"
-            "مثال: /room ABC123",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
-    
-    room_code = context.args[0]
-    await show_room_ranking(update, context, room_code)
+
 # همچنین یک هندلر برای پیام‌های متنی که با /room_ شروع می‌شوند
 async def handle_room_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """پردازش پیام‌های /room_..."""
@@ -7616,7 +7598,8 @@ def main() -> None:
         
         print("   2 دستور نیم‌کوپن ثبت شد")
         # دستورات رقابت
-        application.add_handler(CommandHandler("room", room_command_handler))
+        # خط 7601 را به این صورت تغییر دهید:
+        application.add_handler(CommandHandler("room", lambda update, context: show_room_ranking(update, context, context.args[0] if context.args else None)))
         application.add_handler(CommandHandler("join", join_command_handler))
         
         
