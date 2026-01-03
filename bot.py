@@ -262,6 +262,30 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS competition_rooms (
+                room_code VARCHAR(10) PRIMARY KEY,
+                creator_id BIGINT REFERENCES users(user_id),
+                password VARCHAR(4),
+                end_time VARCHAR(10),  -- مثل '20:00'
+                min_players INT DEFAULT 5,
+                status VARCHAR(20) DEFAULT 'waiting',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+
+            """
+            CREATE TABLE IF NOT EXISTS room_participants (
+                room_code VARCHAR(10) REFERENCES competition_rooms(room_code),
+                user_id BIGINT REFERENCES users(user_id),
+                total_minutes INT DEFAULT 0,
+                current_subject VARCHAR(50),
+                current_topic VARCHAR(100),
+                last_rank INT,
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (room_code, user_id)
+            )
+            """,
             
             # جدول جدید: استرک‌های مطالعه
             """
