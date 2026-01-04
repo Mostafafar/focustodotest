@@ -3026,13 +3026,16 @@ async def handle_competition_password(update: Update, context: ContextTypes.DEFA
 
 async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, room_code: str = None) -> None:
     """نمایش رتبه‌بندی اتاق"""
+    # اگر room_code مستقیم به عنوان آرگومان نیامده باشد
     if not room_code:
-        # اگر از آرگومان دستور آمده
         if context.args:
             room_code = context.args[0]
         else:
-            # اگر از پیام متنی آمده
-            room_code = update.message.text.replace("/room_", "").strip()
+            # اگر از پیام متنی آمده (/room_ABC123)
+            if update.message and update.message.text:
+                text = update.message.text.strip()
+                if text.startswith('/room_'):
+                    room_code = text.replace('/room_', '').upper()
     
     if not room_code or len(room_code) != 6:
         await update.message.reply_text(
@@ -3040,6 +3043,9 @@ async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             "مثال: /room_D9L9B7"
         )
         return
+    
+    # بقیه پیاده‌سازی تابع که در کد اصلی وجود دارد...
+    # (کد قبلی این تابع که در وسط فایل وجود دارد)
     
     user_id = update.effective_user.id
     logger.info(f"🔍 نمایش رتبه‌بندی اتاق {room_code} برای کاربر {user_id}")
@@ -7344,6 +7350,8 @@ async def check_competition_rooms_job(context: ContextTypes.DEFAULT_TYPE):
                         
     except Exception as e:
         logger.error(f"خطا در Job بررسی اتاق‌ها: {e}")
+
+# همچنین یک هندلر برای پیام‌های متنی که با /room_ شروع می‌شوند
 async def join_room_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """دستور پیوستن به اتاق با کد"""
     user_id = update.effective_user.id
@@ -7372,6 +7380,7 @@ async def join_room_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True),
         parse_mode=ParseMode.MARKDOWN
     )
+
 async def show_my_rooms(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
     """نمایش اتاق‌های کاربر"""
     try:
@@ -7453,6 +7462,7 @@ async def show_my_rooms(update: Update, context: ContextTypes.DEFAULT_TYPE, user
             f"مثال: /room_EJ2PJN",
             reply_markup=get_competition_keyboard()
         )
+
 async def handle_room_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """دستور /room برای مشاهده رتبه‌بندی اتاق"""
     # اگر از فرمت /room_ABCDEF استفاده شده
@@ -7473,7 +7483,6 @@ async def handle_room_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await show_room_ranking(update, context, room_code)
 
-# همچنین یک هندلر برای پیام‌های متنی که با /room_ شروع می‌شوند
 async def handle_room_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """پردازش پیام‌های /room_..."""
     text = update.message.text.strip()
@@ -7487,21 +7496,38 @@ async def handle_room_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "کد اتاق باید ۶ کاراکتر باشد.\n"
             "مثال: /room_D9L9B7"
         )
-def escape_html_for_telegram(text: str) -> str:
-    """فرار کردن کاراکترهای مخصوص برای HTML تلگرام"""
-    return html.escape(text)
-def safe_html(text: str) -> str:
-    """تبدیل ایمن متن به HTML برای تلگرام"""
-    if not text:
-        return ""
+
+# -----------------------------------------------------------
+# همچنین تابع handle_join_underscore باید در فایل اصلی وجود داشته باشد:
+# -----------------------------------------------------------
+# (این تابع را قبلاً در فایل اصلی داشتید، برای اطمینان اینجا هم می‌آورم)
+
+async def handle_join_underscore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """پردازش فرمان‌های /join_XXXXXX (لینک‌های دعوت)"""
+    text = update.message.text.strip()
+    room_code = text.replace('/join_', '').upper()
     
-    # فرار کردن کاراکترهای HTML
-    text = html.escape(text)
-    
-    # جایگزینی اینترها با <br>
-    text = text.replace('\n', '<br>')
-    
-    return text
+    # اعتبارسنجی ساده
+    if not room_code or len(room_code) != 6:
+        await update.message.reply_text("❌ کد اتاق نامعتبر است. مثال: /join_ABC123")
+        return
+
+    room_info = get_room_info(room_code)
+    if not room_info:
+        await update.message.reply_text("❌ اتاق یافت نشد.")
+        return
+
+    context.user_data["joining_room"] = room_code
+    await update.message.reply_text(
+        f"<b>🔐 ورود به اتاق #{room_code}</b>\n\n"
+        f"سازنده: {room_info['creator_name'] or 'نامشخص'}\n"
+        f"تا ساعت: {room_info['end_time']}\n"
+        f"شرکت‌کنندگان: {room_info['player_count']} نفر\n\n"
+        "⚠️ این اتاق رمز دارد.\n"
+        "لطفا رمز ۴ رقمی را وارد کنید:",
+        reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True),
+        parse_mode=ParseMode.HTML
+        )
 def main() -> None:
     """تابع اصلی اجرای ربات"""
     application = Application.builder().token(TOKEN).build()
@@ -7593,14 +7619,34 @@ def main() -> None:
         application.add_handler(CommandHandler("check_stats", check_my_stats_command))
         # در تابع main() به بخش دستورات اضافه کنید:
         print("\n🎫 ثبت دستورات نیم‌کوپن...")
-        application.add_handler(CommandHandler("join", join_room_command))
+        
         application.add_handler(CommandHandler("combine_coupons", combine_coupons_command))
         
         print("   2 دستور نیم‌کوپن ثبت شد")
         # دستورات رقابت
         # خط 7601 را به این صورت تغییر دهید:
-        application.add_handler(CommandHandler("room", lambda update, context: show_room_ranking(update, context, context.args[0] if context.args else None)))
-        
+        # -----------------------------------------------------------
+# ثبت هندلرها
+# -----------------------------------------------------------
+
+# ثبت هندلر دستور /room با آرگومان
+        application.add_handler(CommandHandler("room", show_room_ranking))
+
+# ثبت هندلر برای پیام‌های /room_XXXXXX
+        application.add_handler(
+            MessageHandler(
+                filters.Regex(r'^/room_[A-Za-z0-9]{6}$') & filters.COMMAND,
+                handle_room_message
+            )
+        )
+
+# ثبت هندلر برای پیام‌های /join_XXXXXX (اگر لازم است)
+        application.add_handler(
+            MessageHandler(
+                filters.Regex(r'^/join_[A-Za-z0-9]{6}$') & filters.COMMAND,
+                handle_join_underscore
+            )
+        )
         
         
         print("\n" + "=" * 70)
