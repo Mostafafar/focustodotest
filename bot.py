@@ -2985,26 +2985,43 @@ async def handle_competition_password(update: Update, context: ContextTypes.DEFA
     room_code = create_competition_room(user_id, end_time, password)
     
     if room_code:
-        # دریافت اطلاعات کاربر
-        user_info = get_user_info(user_id)
-        username = user_info["username"] if user_info else "شما"
+        # دریافت نام واقعی کاربر
+        try:
+            chat_member = await context.bot.get_chat(user_id)
+            if chat_member.first_name:
+                user_display = chat_member.first_name
+                if chat_member.last_name:
+                    user_display += f" {chat_member.last_name}"
+            elif chat_member.username:
+                user_display = f"@{chat_member.username}"
+            else:
+                user_info = get_user_info(user_id)
+                user_display = user_info["username"] if user_info else "شما"
+        except Exception:
+            user_info = get_user_info(user_id)
+            user_display = user_info["username"] if user_info else "شما"
+        
+        # دریافت تاریخ و زمان ایران
+        date_str, time_str = get_iran_time()
         
         # ایجاد لینک دعوت
         invite_link = f"https://t.me/{context.bot.username}?start=join_{room_code}"
         
-        # متن پیام با HTML - دقت کنید که تمام تگ‌ها بسته شوند
+        # متن پیام با HTML
         message_text = (
             f"<b>✅ اتاق رقابت ساخته شد!</b>\n\n"
             f"<b>🏷 کد اتاق:</b> <code>{room_code}</code>\n"
             f"<b>🔐 رمز:</b> <code>{password}</code>\n"
             f"<b>🕒 تا ساعت:</b> <code>{end_time}</code>\n"
             f"<b>👥 حداقل:</b> ۵ نفر\n\n"
+            f"<b>📅 تاریخ ایجاد:</b> {date_str}\n"
+            f"<b>⏰ ساعت ایجاد:</b> {time_str}\n\n"
             f"<b>🔗 لینک دعوت:</b>\n"
             f"<code>{invite_link}</code>\n\n"
             f"<b>📋 دستورات مدیریت:</b>\n"
             f"برای مشاهده رتبه‌بندی: /room_{room_code}\n\n"
             f"<b>👥 اعضای اتاق:</b>\n"
-            f"✅ {username} (سازنده)"
+            f"✅ {html.escape(user_display)} (سازنده)"
         )
         
         await update.message.reply_text(
@@ -3023,7 +3040,6 @@ async def handle_competition_password(update: Update, context: ContextTypes.DEFA
     context.user_data.pop("creating_competition", None)
     context.user_data.pop("competition_end_time", None)
     context.user_data.pop("awaiting_password", None)
-
 async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, room_code: str = None) -> None:
     """نمایش رتبه‌بندی اتاق"""
     # اگر room_code مستقیماً به عنوان آرگومان نیامده باشد
