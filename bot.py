@@ -3090,14 +3090,37 @@ async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             else:
                 medal = f"{rank['rank']}."
             
-            username = rank["username"] or "کاربر"
-            if username == "None":
-                username = "کاربر"
+            # دریافت نام واقعی کاربر از تلگرام
+            try:
+                chat_member = await context.bot.get_chat(rank["user_id"])
+                if chat_member.first_name:
+                    user_display = chat_member.first_name
+                    if chat_member.last_name:
+                        user_display += f" {chat_member.last_name}"
+                elif chat_member.username:
+                    user_display = f"@{chat_member.username}"
+                else:
+                    user_display = "کاربر"
+            except Exception as e:
+                logger.error(f"خطا در دریافت اطلاعات کاربر {rank['user_id']}: {e}")
+                user_display = "کاربر"
             
             # اگر کاربر جاری هستیم
             is_you = " 👈 شما" if rank["user_id"] == user_id else ""
             
-            text += f"{medal} <b>{escape_html_for_telegram(username)}</b> ({rank['total_minutes']}د){is_you}\n"
+            # تبدیل زمان به فرمت زیبا
+            total_minutes = rank["total_minutes"]
+            hours = total_minutes // 60
+            mins = total_minutes % 60
+            
+            if hours > 0 and mins > 0:
+                time_display = f"{hours}h {mins}m"
+            elif hours > 0:
+                time_display = f"{hours}h"
+            else:
+                time_display = f"{mins}m"
+            
+            text += f"{medal} <b>{html.escape(user_display)}</b> ({time_display}){is_you}\n"
         
         # اطلاعات کاربر جاری
         if user_room_info:
