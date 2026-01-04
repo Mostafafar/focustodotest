@@ -7525,6 +7525,25 @@ async def handle_join_underscore(update: Update, context: ContextTypes.DEFAULT_T
         reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True),
         parse_mode=ParseMode.HTML
         )
+def escape_html_for_telegram(text: str) -> str:
+    """پاکسازی متن برای استفاده در HTML تلگرام"""
+    if not text:
+        return ""
+    
+    # جایگزینی کاراکترهای مخصوص HTML
+    text = html.escape(text)
+    
+    # اما در تلگرام برخی کاراکترها نیاز به جایگزینی خاص دارند
+    replacements = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+    }
+    
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+    
+    return text
 def main() -> None:
     """تابع اصلی اجرای ربات"""
     application = Application.builder().token(TOKEN).build()
