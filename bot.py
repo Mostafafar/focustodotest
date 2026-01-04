@@ -3254,10 +3254,13 @@ def get_room_info(room_code: str) -> Optional[Dict]:
         result = db.execute_query(query, (room_code,), fetch=True)
         
         if result:
+            # زمان را به فرمت ایران نمایش بده
+            end_time = result[2]  # این زمان به صورت "20:00" است
+            # اگر لازم است تبدیل کن، ولی از همین فرمت استفاده می‌کنیم
             return {
                 "room_code": result[0],
                 "creator_id": result[1],
-                "end_time": result[2],
+                "end_time": end_time,  # همین زمان را برمی‌گردانیم
                 "status": result[3],
                 "created_at": result[4],
                 "creator_name": result[5],
@@ -3268,7 +3271,6 @@ def get_room_info(room_code: str) -> Optional[Dict]:
     except Exception as e:
         logger.error(f"خطا در دریافت اطلاعات اتاق: {e}")
         return None
-
 def get_room_ranking(room_code: str) -> List[Dict]:
     """دریافت رتبه‌بندی اتاق"""
     try:
