@@ -3026,7 +3026,7 @@ async def handle_competition_password(update: Update, context: ContextTypes.DEFA
 
 async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, room_code: str = None) -> None:
     """نمایش رتبه‌بندی اتاق"""
-    # اگر room_code مستقیم به عنوان آرگومان نیامده باشد
+    # اگر room_code مستقیماً به عنوان آرگومان نیامده باشد
     if not room_code:
         if context.args:
             room_code = context.args[0]
@@ -3043,9 +3043,6 @@ async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             "مثال: /room_D9L9B7"
         )
         return
-    
-    # بقیه پیاده‌سازی تابع که در کد اصلی وجود دارد...
-    # (کد قبلی این تابع که در وسط فایل وجود دارد)
     
     user_id = update.effective_user.id
     logger.info(f"🔍 نمایش رتبه‌بندی اتاق {room_code} برای کاربر {user_id}")
@@ -3070,16 +3067,16 @@ async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         
         rankings = get_room_ranking(room_code)
         
-        # ساخت پیام ساده
-        text = f"🏆 **اتاق #{room_code}**\n"
-        text += f"🕒 تا ساعت: {room_info['end_time']}\n"
-        text += f"👥 شرکت‌کنندگان: {room_info['player_count']} نفر\n"
-        text += f"📊 وضعیت: {'فعال' if room_info['status'] == 'active' else 'در انتظار'}\n\n"
+        # ساخت پیام با HTML
+        text = f"<b>🏆 اتاق #{room_code}</b>\n"
+        text += f"🕒 <b>تا ساعت:</b> {room_info['end_time']}\n"
+        text += f"👥 <b>شرکت‌کنندگان:</b> {room_info['player_count']} نفر\n"
+        text += f"📊 <b>وضعیت:</b> {'فعال' if room_info['status'] == 'active' else 'در انتظار'}\n\n"
         
         if room_info['status'] != 'active':
             text += f"⏳ منتظر {5 - room_info['player_count']} نفر دیگر...\n\n"
         
-        text += "🏅 **رتبه‌بندی لحظه‌ای:**\n\n"
+        text += "<b>🏅 رتبه‌بندی لحظه‌ای:</b>\n\n"
         
         # فقط ۵ نفر اول را نمایش بده
         for rank in rankings[:5]:
@@ -3100,13 +3097,13 @@ async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             # اگر کاربر جاری هستیم
             is_you = " 👈 شما" if rank["user_id"] == user_id else ""
             
-            text += f"{medal} **{username}** ({rank['total_minutes']}د){is_you}\n"
+            text += f"{medal} <b>{escape_html_for_telegram(username)}</b> ({rank['total_minutes']}د){is_you}\n"
         
         # اطلاعات کاربر جاری
         if user_room_info:
             current_rank = next((r["rank"] for r in rankings if r["user_id"] == user_id), None)
             if current_rank:
-                text += f"\n🎯 **موقعیت شما:** رتبه {current_rank}\n"
+                text += f"\n🎯 <b>موقعیت شما:</b> رتبه {current_rank}\n"
                 
                 # هشدار رقابتی
                 if current_rank > 1 and len(rankings) > 0:
@@ -3119,7 +3116,7 @@ async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         
         await update.message.reply_text(
             text,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
             reply_markup=get_competition_keyboard()
         )
         
