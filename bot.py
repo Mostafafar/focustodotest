@@ -271,6 +271,7 @@ class Database:
                 min_players INT DEFAULT 5,
                 status VARCHAR(20) DEFAULT 'waiting',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                
             )
             """,
 
@@ -3178,15 +3179,20 @@ def create_competition_room(creator_id: int, end_time: str, password: str) -> Op
         conn = db.get_connection()
         cursor = conn.cursor()
         
-        # 1. ایجاد اتاق
+        # دریافت تاریخ و زمان ایران
+        date_str, time_str = get_iran_time()
+        
+        # 1. ایجاد اتاق با تاریخ و زمان
         query = """
-        INSERT INTO competition_rooms (room_code, creator_id, password, end_time, status)
-        VALUES (%s, %s, %s, %s, 'waiting')
+        INSERT INTO competition_rooms (room_code, creator_id, password, end_time, status, created_at)
+        VALUES (%s, %s, %s, %s, 'waiting', %s)
         RETURNING room_code
         """
         
+        created_at = datetime.now(IRAN_TZ)
+        
         logger.info(f"🔍 در حال ایجاد اتاق در دیتابیس...")
-        cursor.execute(query, (room_code, creator_id, password, end_time))
+        cursor.execute(query, (room_code, creator_id, password, end_time, created_at))
         result = cursor.fetchone()
         
         if not result:
@@ -3223,7 +3229,6 @@ def create_competition_room(creator_id: int, end_time: str, password: str) -> Op
         if conn:
             db.return_connection(conn)
             logger.info("🔌 Connection بازگردانده شد")
-
 def join_competition_room(room_code: str, user_id: int, password: str) -> bool:
     """پیوستن به اتاق رقابت"""
     try:
