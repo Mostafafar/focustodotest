@@ -7760,6 +7760,7 @@ def main() -> None:
         first=10,
         name="periodic_encouragement"
     )
+    
     # Job برای بررسی اتاق‌های تمام‌شده (هر ۵ دقیقه)
     application.job_queue.run_repeating(
         lambda context: check_competition_rooms_job(context),
@@ -7767,100 +7768,69 @@ def main() -> None:
         first=10,
         name="check_competition_rooms"
     )
-
-
     
-    # ... بقیه کدهای main() بدون تغییر ...
+    # ثبت هندلرهای دستورات اصلی
+    print("\n📝 ثبت هندلرهای دستورات...")
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("admin", admin_command))
+    application.add_handler(CommandHandler("active", active_command))
+    application.add_handler(CommandHandler("deactive", deactive_command))
+    application.add_handler(CommandHandler("addfile", addfile_command))
+    application.add_handler(CommandHandler("skip", skip_command))
+    application.add_handler(CommandHandler("updateuser", updateuser_command))
+    application.add_handler(CommandHandler("userinfo", userinfo_command))
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
+    application.add_handler(CommandHandler("sendtop", sendtop_command))
+    application.add_handler(CommandHandler("users", users_command))
+    application.add_handler(CommandHandler("send", send_command))
+    application.add_handler(CommandHandler("my_coupons", my_coupons_command))
+    print("   ✓ 13 دستور اصلی ثبت شد")
+    
+    # ثبت دستورات دیباگ
+    print("\n🔍 ثبت دستورات دیباگ...")
+    application.add_handler(CommandHandler("sessions", debug_sessions_command))
+    application.add_handler(CommandHandler("debugfiles", debug_files_command))
+    application.add_handler(CommandHandler("checkdb", check_database_command))
+    application.add_handler(CommandHandler("debugmatch", debug_user_match_command))
+    application.add_handler(CommandHandler("dailystats", debug_daily_stats_command))
+    print("   ✓ 5 دستور دیباگ ثبت شد")
+    
+    # ثبت هندلرهای پیام و فایل
+    print("\n📨 ثبت هندلرهای پیام و فایل...")
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_payment_photo))
+    print("   ✓ هندلرهای متن، فایل و عکس ثبت شد")
+    
+    # ثبت دستورات سیستم کوپن
+    print("\n🎫 ثبت دستورات سیستم کوپن...")
+    application.add_handler(CommandHandler("set_card", set_card_command))
+    application.add_handler(CommandHandler("coupon_requests", coupon_requests_command))
+    application.add_handler(CommandHandler("verify_coupon", verify_coupon_command))
+    application.add_handler(CommandHandler("coupon_stats", coupon_stats_command))
+    application.add_handler(CommandHandler("debug_all_requests", debug_all_requests_command))
+    application.add_handler(CommandHandler("check_stats", check_my_stats_command))
+    application.add_handler(CommandHandler("combine_coupons", combine_coupons_command))
+    print("   ✓ 7 دستور کوپن و نیم‌کوپن ثبت شد")
+    
+    # ثبت دستورات رقابت
+    print("\n🏆 ثبت دستورات رقابت...")
+    application.add_handler(CommandHandler("room", show_room_ranking))
+    application.add_handler(
+        MessageHandler(
+            filters.Regex(r'^/room_[A-Za-z0-9]{6}$') & filters.COMMAND,
+            handle_room_message
+        )
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.Regex(r'^/join_[A-Za-z0-9]{6}$') & filters.COMMAND,
+            handle_join_underscore
+        )
+    )
+    print("   ✓ دستورات رقابت ثبت شد")
     
     try:
-        print("\n📝 ثبت هندلرهای دستورات...")
-        application.add_handler(CommandHandler("start", start_command))
-        application.add_handler(CommandHandler("admin", admin_command))
-        application.add_handler(CommandHandler("active", active_command))
-        application.add_handler(CommandHandler("deactive", deactive_command))
-        application.add_handler(CommandHandler("addfile", addfile_command))
-        application.add_handler(CommandHandler("skip", skip_command))
-        application.add_handler(CommandHandler("updateuser", updateuser_command))
-        application.add_handler(CommandHandler("userinfo", userinfo_command))
-        application.add_handler(CommandHandler("broadcast", broadcast_command))
-        application.add_handler(CommandHandler("sendtop", sendtop_command))
-        application.add_handler(CommandHandler("users", users_command))
-        application.add_handler(CommandHandler("send", send_command))
-        application.add_handler(CommandHandler("my_coupons", my_coupons_command))
-        print("   ✓ 12 دستور اصلی ثبت شد")
-        
-        
-        # در تابع main() به بخش دستورات دیباگ اضافه کنید:
-        print("\n🔍 ثبت دستورات دیباگ...")
-        application.add_handler(CommandHandler("sessions", debug_sessions_command))
-        application.add_handler(CommandHandler("debugfiles", debug_files_command))
-        application.add_handler(CommandHandler("checkdb", check_database_command))
-        application.add_handler(CommandHandler("debugmatch", debug_user_match_command))
-        application.add_handler(CommandHandler("dailystats", debug_daily_stats_command))  # اضافه کردن این خط
-        print("   ✓ 5 دستور دیباگ ثبت شد")
-        
-        print("\n📨 ثبت هندلرهای پیام و فایل...")
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-        application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-        print("   ✓ هندلرهای متن و فایل ثبت شد")
-         
-        print("\n🎫 ثبت دستورات سیستم کوپن...")
-        application.add_handler(CommandHandler("set_card", set_card_command))
-        application.add_handler(CommandHandler("coupon_requests", coupon_requests_command))
-        application.add_handler(CommandHandler("verify_coupon", verify_coupon_command))
-        application.add_handler(CommandHandler("coupon_stats", coupon_stats_command))
-        print("   ✓ 4 دستور جدید کوپن ثبت شد")
-        
-        application.add_handler(MessageHandler(filters.PHOTO, handle_payment_photo))
-        print("   ✓ هندلرهای متن، فایل و عکس ثبت شد")
-        application.add_handler(CommandHandler("debug_all_requests", debug_all_requests_command))
-        application.add_handler(CommandHandler("check_stats", check_my_stats_command))
-        # در تابع main() به بخش دستورات اضافه کنید:
-        print("\n🎫 ثبت دستورات نیم‌کوپن...")
-        
-        application.add_handler(CommandHandler("combine_coupons", combine_coupons_command))
-        
-        print("   2 دستور نیم‌کوپن ثبت شد")
-        # دستورات رقابت
-        # خط 7601 را به این صورت تغییر دهید:
-        # -----------------------------------------------------------
-# ثبت هندلرها
-# -----------------------------------------------------------
-
-# ثبت هندلر دستور /room با آرگومان
-        application.add_handler(CommandHandler("room", show_room_ranking))
-
-# ثبت هندلر برای پیام‌های /room_XXXXXX
-        application.add_handler(
-            MessageHandler(
-                filters.Regex(r'^/room_[A-Za-z0-9]{6}$') & filters.COMMAND,
-                handle_room_message
-            )
-        )
-
-# ثبت هندلر برای پیام‌های /join_XXXXXX (اگر لازم است)
-        application.add_handler(
-            MessageHandler(
-                filters.Regex(r'^/join_[A-Za-z0-9]{6}$') & filters.COMMAND,
-                handle_join_underscore
-            )
-        )
-
-    
-    # اضافه کردن هندلرها...
-    # [همه هندلرهای قبلی]
-    
-    # راه‌اندازی ربات
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    
-    # تنظیم Job برای بررسی اتاق‌ها (هر 5 دقیقه)
-    job_queue = application.job_queue
-    job_queue.run_repeating(check_and_finish_rooms_job, interval=300, first=10)  # هر 5 دقیقه
-    
-    
-        
         print("\n" + "=" * 70)
         print("🤖 ربات Focus Todo آماده اجراست!")
         print("=" * 70)
