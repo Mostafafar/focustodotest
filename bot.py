@@ -7805,7 +7805,7 @@ def main() -> None:
     
     # Job برای بررسی اتاق‌های تمام‌شده (هر ۵ دقیقه)
     application.job_queue.run_repeating(
-        lambda context: check_competition_rooms_job(context),
+        lambda context: check_and_finish_rooms_job(context),
         interval=300,  # هر ۵ دقیقه
         first=10,
         name="check_competition_rooms"
