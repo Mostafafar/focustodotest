@@ -3003,7 +3003,9 @@ async def handle_competition_password(update: Update, context: ContextTypes.DEFA
             user_display = user_info["username"] if user_info else "شما"
         
         # دریافت تاریخ و زمان ایران
-        date_str, time_str = get_iran_time()
+        now_iran = datetime.now(IRAN_TZ)
+        date_str = now_iran.strftime("%Y/%m/%d")
+        time_str = now_iran.strftime("%H:%M")
         
         # ایجاد لینک دعوت
         invite_link = f"https://t.me/{context.bot.username}?start=join_{room_code}"
@@ -3180,19 +3182,20 @@ def create_competition_room(creator_id: int, end_time: str, password: str) -> Op
         cursor = conn.cursor()
         
         # دریافت تاریخ و زمان ایران
-        date_str, time_str = get_iran_time()
+        now_iran = datetime.now(IRAN_TZ)
+        date_str = now_iran.strftime("%Y-%m-%d")
+        time_str = now_iran.strftime("%H:%M:%S")
         
-        # 1. ایجاد اتاق با تاریخ و زمان
+        # 1. ایجاد اتاق با تاریخ و زمان ایران
         query = """
         INSERT INTO competition_rooms (room_code, creator_id, password, end_time, status, created_at)
         VALUES (%s, %s, %s, %s, 'waiting', %s)
         RETURNING room_code
         """
         
-        created_at = datetime.now(IRAN_TZ)
-        
         logger.info(f"🔍 در حال ایجاد اتاق در دیتابیس...")
-        cursor.execute(query, (room_code, creator_id, password, end_time, created_at))
+        logger.info(f"📅 زمان ایجاد (ایران): {date_str} {time_str}")
+        cursor.execute(query, (room_code, creator_id, password, end_time, now_iran))
         result = cursor.fetchone()
         
         if not result:
@@ -3204,12 +3207,12 @@ def create_competition_room(creator_id: int, end_time: str, password: str) -> Op
         
         # 2. اضافه کردن سازنده به اتاق
         query2 = """
-        INSERT INTO room_participants (room_code, user_id)
-        VALUES (%s, %s)
+        INSERT INTO room_participants (room_code, user_id, joined_at)
+        VALUES (%s, %s, %s)
         """
         
         logger.info(f"🔍 در حال اضافه کردن سازنده {creator_id} به اتاق...")
-        cursor.execute(query2, (room_code, creator_id))
+        cursor.execute(query2, (room_code, creator_id, now_iran))
         
         conn.commit()
         logger.info(f"✅ سازنده {creator_id} به اتاق {room_code} اضافه شد")
@@ -3252,12 +3255,13 @@ def join_competition_room(room_code: str, user_id: int, password: str) -> bool:
         if check:
             return True  # قبلاً عضو است
         
-        # اضافه کردن کاربر به اتاق
+        # اضافه کردن کاربر به اتاق با زمان ایران
+        now_iran = datetime.now(IRAN_TZ)
         query_join = """
-        INSERT INTO room_participants (room_code, user_id)
-        VALUES (%s, %s)
+        INSERT INTO room_participants (room_code, user_id, joined_at)
+        VALUES (%s, %s, %s)
         """
-        db.execute_query(query_join, (room_code, user_id))
+        db.execute_query(query_join, (room_code, user_id, now_iran))
         
         # بررسی آیا حداقل تعداد رسیده
         query_count = """
@@ -3298,17 +3302,37 @@ def get_room_info(room_code: str) -> Optional[Dict]:
         result = db.execute_query(query, (room_code,), fetch=True)
         
         if result:
-            # زمان را به فرمت ایران نمایش بده
-            end_time = result[2]  # این زمان به صورت "20:00" است
-            # اگر لازم است تبدیل کن، ولی از همین فرمت استفاده می‌کنیم
+            room_code, creator_id, end_time, status, created_at, creator_name, player_count = result
+            
+            # تبدیل زمان ایجاد به وقت ایران
+            if created_at:
+                if isinstance(created_at, str):
+                    # اگر رشته است، تبدیل به datetime
+                    try:
+                        created_at_obj = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    except:
+                        created_at_obj = datetime.now(IRAN_TZ)
+                else:
+                    created_at_obj = created_at
+                
+                # تبدیل به وقت ایران
+                if created_at_obj.tzinfo is None:
+                    created_at_obj = IRAN_TZ.localize(created_at_obj)
+                else:
+                    created_at_obj = created_at_obj.astimezone(IRAN_TZ)
+                
+                created_at_str = created_at_obj.strftime("%Y/%m/%d %H:%M")
+            else:
+                created_at_str = "نامشخص"
+            
             return {
-                "room_code": result[0],
-                "creator_id": result[1],
-                "end_time": end_time,  # همین زمان را برمی‌گردانیم
-                "status": result[3],
-                "created_at": result[4],
-                "creator_name": result[5],
-                "player_count": result[6]
+                "room_code": room_code,
+                "creator_id": creator_id,
+                "end_time": end_time,
+                "status": status,
+                "created_at": created_at_str,  # زمان فرمت شده ایران
+                "creator_name": creator_name,
+                "player_count": player_count
             }
         return None
         
