@@ -5939,48 +5939,48 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 # پردازش زمان دلخواه
     elif context.user_data.get("awaiting_custom_time"):
-    # تشخیص نوع درخواست
-    if context.user_data.get("creating_competition"):
+        # تشخیص نوع درخواست
+        if context.user_data.get("creating_competition"):
         # اتاق رقابتی - فرمت ساعت:دقیقه
-        if ":" in text and text.replace(":", "").isdigit():
-            context.user_data["competition_end_time"] = text
-            context.user_data["awaiting_password"] = True
-            context.user_data.pop("awaiting_custom_time", None)
+            if ":" in text and text.replace(":", "").isdigit():
+                context.user_data["competition_end_time"] = text
+                context.user_data["awaiting_password"] = True
+                context.user_data.pop("awaiting_custom_time", None)
             
-            await update.message.reply_text(
-                f"🕒 ساعت پایان: **{text}**\n\n"
-                f"🔐 **رمز ۴ رقمی برای اتاق وارد کنید:**",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True)
-            )
-        else:
-            await update.message.reply_text("❌ فرمت زمان نامعتبر. مثال: 20:30")
-    else:
-        # ثبت مطالعه - فرمت دقیقه (عدد ساده)
-        try:
-            minutes = int(text)
-            if MIN_STUDY_TIME <= minutes <= MAX_STUDY_TIME:
-                context.user_data["study_minutes"] = minutes
-                
                 await update.message.reply_text(
-                    f"⏰ زمان مطالعه: {minutes} دقیقه\n\n"
-                    f"🎯 لطفا مبحث مطالعه را وارد کنید:",
+                    f"🕒 ساعت پایان: **{text}**\n\n"
+                    f"🔐 **رمز ۴ رقمی برای اتاق وارد کنید:**",
+                    parse_mode=ParseMode.MARKDOWN,
                     reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True)
                 )
-                
-                context.user_data["awaiting_topic"] = True
-                context.user_data.pop("awaiting_custom_time", None)
             else:
+                await update.message.reply_text("❌ فرمت زمان نامعتبر. مثال: 20:30")
+        else:
+        # ثبت مطالعه - فرمت دقیقه (عدد ساده)
+            try:
+                minutes = int(text)
+                if MIN_STUDY_TIME <= minutes <= MAX_STUDY_TIME:
+                    context.user_data["study_minutes"] = minutes
+                
+                    await update.message.reply_text(
+                        f"⏰ زمان مطالعه: {minutes} دقیقه\n\n"
+                        f"🎯 لطفا مبحث مطالعه را وارد کنید:",
+                        reply_markup=ReplyKeyboardMarkup([["🔙 بازگشت"]], resize_keyboard=True)
+                    )
+                
+                    context.user_data["awaiting_topic"] = True
+                    context.user_data.pop("awaiting_custom_time", None)
+                else:
+                    await update.message.reply_text(
+                        f"❌ زمان باید بین {MIN_STUDY_TIME} تا {MAX_STUDY_TIME} دقیقه باشد."
+                    )
+            except ValueError:
                 await update.message.reply_text(
-                    f"❌ زمان باید بین {MIN_STUDY_TIME} تا {MAX_STUDY_TIME} دقیقه باشد."
+                    f"❌ لطفا عدد وارد کنید (دقیقه). مثال: ۴۵\n"
+                    f"حداقل: {MIN_STUDY_TIME} دقیقه\n"
+                    f"حداکثر: {MAX_STUDY_TIME} دقیقه"
                 )
-        except ValueError:
-            await update.message.reply_text(
-                f"❌ لطفا عدد وارد کنید (دقیقه). مثال: ۴۵\n"
-                f"حداقل: {MIN_STUDY_TIME} دقیقه\n"
-                f"حداکثر: {MAX_STUDY_TIME} دقیقه"
-            )
-    return
+         return
 
 # پردازش رمز ورود به اتاق
     
