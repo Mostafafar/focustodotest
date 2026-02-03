@@ -3195,6 +3195,8 @@ def create_competition_room(creator_id: int, end_time: str, password: str) -> Op
         
         logger.info(f"🔍 در حال ایجاد اتاق در دیتابیس...")
         logger.info(f"📅 زمان ایجاد (ایران): {date_str} {time_str}")
+        
+        # 🔴 اصلاح: ارسال now_iran به عنوان پارامتر
         cursor.execute(query, (room_code, creator_id, password, end_time, now_iran))
         result = cursor.fetchone()
         
@@ -3261,7 +3263,9 @@ def join_competition_room(room_code: str, user_id: int, password: str) -> bool:
         INSERT INTO room_participants (room_code, user_id, joined_at)
         VALUES (%s, %s, %s)
         """
-        db.execute_query(query_join, (room_code, user_id, now_iran))
+        
+        # 🔴 اصلاح: استفاده از now_iran به جای time.time()
+        result = db.execute_query(query_join, (room_code, user_id, now_iran))
         
         # بررسی آیا حداقل تعداد رسیده
         query_count = """
@@ -3302,31 +3306,34 @@ def get_room_info(room_code: str) -> Optional[Dict]:
         result = db.execute_query(query, (room_code,), fetch=True)
         
         if result:
-            room_code, creator_id, end_time, status, created_at, creator_name, player_count = result
+            room_code_db, creator_id, end_time, status, created_at, creator_name, player_count = result
             
             # تبدیل زمان ایجاد به وقت ایران
             if created_at:
                 if isinstance(created_at, str):
-                    # اگر رشته است، تبدیل به datetime
+                    # اگر رشته است، فرض کنیم UTC است
                     try:
-                        created_at_obj = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        created_at_utc = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        # تبدیل به وقت ایران
+                        created_at_obj = created_at_utc.astimezone(IRAN_TZ)
                     except:
                         created_at_obj = datetime.now(IRAN_TZ)
                 else:
-                    created_at_obj = created_at
-                
-                # تبدیل به وقت ایران
-                if created_at_obj.tzinfo is None:
-                    created_at_obj = IRAN_TZ.localize(created_at_obj)
-                else:
-                    created_at_obj = created_at_obj.astimezone(IRAN_TZ)
+                    # اگر datetime است
+                    if created_at.tzinfo is None:
+                        # اگر بدون تایم‌زون باشد، فرض کنیم UTC است
+                        created_at_utc = pytz.UTC.localize(created_at)
+                        created_at_obj = created_at_utc.astimezone(IRAN_TZ)
+                    else:
+                        # اگر با تایم‌زون باشد، مستقیم تبدیل کن
+                        created_at_obj = created_at.astimezone(IRAN_TZ)
                 
                 created_at_str = created_at_obj.strftime("%Y/%m/%d %H:%M")
             else:
                 created_at_str = "نامشخص"
             
             return {
-                "room_code": room_code,
+                "room_code": room_code_db,
                 "creator_id": creator_id,
                 "end_time": end_time,
                 "status": status,
