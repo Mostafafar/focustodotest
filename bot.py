@@ -982,33 +982,40 @@ def award_streak_coupon(user_id: int, streak_id: int) -> Optional[Dict]:
 
 
 
-async def send_menu(update, context):
-    chat_id = update.effective_chat.id
-    payload = {
-        "chat_id": chat_id,
-        "text": "منوی کوپن:",
-        "reply_markup": {
-            "keyboard": [
-                [
-                    {"text": "📞 تماس تلفنی"},
-                    {"text": "📊 تحلیل گزارش", "style": "primary"}
-                ],
-                # بقیه دکمه‌ها ...
-                [{"text": "🔙 بازگشت", "style": "negative"}]
-            ],
-            "resize_keyboard": True,
-            "input_field_placeholder": "یکی از گزینه‌ها را انتخاب کنید..."
-        }
-    }
+def get_coupon_main_keyboard() -> ReplyKeyboardMarkup:
+    """
+    منوی اصلی کوپن با استفاده از style مجاز در Bot API 9.4
+    (primary, success, danger)
+    """
+    keyboard = [
+        [
+            {"text": "📞 تماس تلفنی"},
+            {"text": "📊 تحلیل گزارش", "style": "primary"},
+        ],
+        [
+            {"text": "✏️ تصحیح آزمون"},
+            {"text": "📝 آزمون شخصی", "style": "success"},
+        ],
+        [
+            {"text": "📈 تحلیل آزمون"},
+            {"text": "🔗 برنامه شخصی"},
+        ],
+        [
+            {"text": "🎫 کوپن‌های من"},
+            {"text": "🛒 خرید کوپن", "style": "primary"},
+        ],
+        [
+            {"text": "🔙 بازگشت", "style": "danger"},
+        ]
+    ]
 
-    async with httpx.AsyncClient() as client:
-        r = await client.post(
-            f"https://api.telegram.org/bot{context.bot.token}/sendMessage",
-            json=payload
-        )
-        if r.status_code != 200:
-            print("خطا:", r.text)
-            await update.message.reply_text("مشکلی پیش آمد!")
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        input_field_placeholder="یکی از گزینه‌ها را انتخاب کنید..."
+    )
+
 def get_coupon_method_keyboard() -> ReplyKeyboardMarkup:
     """کیبورد روش‌های کسب کوپن"""
     keyboard = [
