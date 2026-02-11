@@ -977,51 +977,29 @@ def award_streak_coupon(user_id: int, streak_id: int) -> Optional[Dict]:
 
 
 
+
+
 def get_coupon_main_keyboard() -> ReplyKeyboardMarkup:
     """منوی اصلی کوپن با custom emoji + رنگ دکمه"""
     keyboard = [
         [
-            KeyboardButton(
-                text="📞 تماس تلفنی",
-                icon_custom_emoji_id="5401234567890123456"   # آی‌دی واقعی custom emoji رو بذار
-            ),
-            KeyboardButton(
-                text="📊 تحلیل گزارش",
-                style="primary"           # رنگ برجسته (معمولاً آبی)
-            )
+            {"text": "📞 تماس تلفنی", "icon_custom_emoji_id": "5401234567890123456"},
+            {"text": "📊 تحلیل گزارش", "style": "primary"}
         ],
         [
-            KeyboardButton(
-                text="✏️ تصحیح آزمون",
-                icon_custom_emoji_id="5368324170671202286"   # یه آی‌دی دیگه مثال
-            ),
-            KeyboardButton(
-                text="📝 آزمون شخصی",
-                style="positive"          # سبز
-            )
+            {"text": "✏️ تصحیح آزمون", "icon_custom_emoji_id": "5368324170671202286"},
+            {"text": "📝 آزمون شخصی", "style": "positive"}
         ],
         [
-            KeyboardButton(text="📈 تحلیل آزمون"),
-            KeyboardButton(
-                text="🔗 برنامه شخصی",
-                style="info"              # خاکستری/آبی کم‌رنگ
-            )
+            {"text": "📈 تحلیل آزمون"},
+            {"text": "🔗 برنامه شخصی", "style": "info"}
         ],
         [
-            KeyboardButton(
-                text="🎫 کوپن‌های من",
-                icon_custom_emoji_id="..."   # آی‌دی واقعی
-            ),
-            KeyboardButton(
-                text="🛒 خرید کوپن",
-                style="primary"
-            )
+            {"text": "🎫 کوپن‌های من", "icon_custom_emoji_id": "آی‌دی_واقعی"},
+            {"text": "🛒 خرید کوپن", "style": "primary"}
         ],
         [
-            KeyboardButton(
-                text="🔙 بازگشت",
-                style="negative"          # قرمز
-            )
+            {"text": "🔙 بازگشت", "style": "negative"}
         ]
     ]
 
