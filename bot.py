@@ -976,35 +976,61 @@ def award_streak_coupon(user_id: int, streak_id: int) -> Optional[Dict]:
 
 
 
+
 def get_coupon_main_keyboard() -> ReplyKeyboardMarkup:
-    """منوی اصلی کوپن با custom emoji + رنگ دکمه (اگر بات اجازه استفاده داشته باشد)"""
+    """منوی اصلی کوپن با custom emoji + رنگ دکمه"""
     keyboard = [
         [
-            KeyboardButton("📞 تماس تلفنی", icon_custom_emoji_id="5401234567890123456"),  # جایگزین با custom_emoji_id واقعی
-            KeyboardButton("📊 تحلیل گزارش", style="primary")   # رنگ برجسته
+            KeyboardButton(
+                text="📞 تماس تلفنی",
+                icon_custom_emoji_id="5401234567890123456"   # آی‌دی واقعی custom emoji رو بذار
+            ),
+            KeyboardButton(
+                text="📊 تحلیل گزارش",
+                style="primary"           # رنگ برجسته (معمولاً آبی)
+            )
         ],
         [
-            KeyboardButton("✏️ تصحیح آزمون", icon_custom_emoji_id="..."),
-            KeyboardButton("📝 آزمون شخصی", style="positive")
+            KeyboardButton(
+                text="✏️ تصحیح آزمون",
+                icon_custom_emoji_id="5368324170671202286"   # یه آی‌دی دیگه مثال
+            ),
+            KeyboardButton(
+                text="📝 آزمون شخصی",
+                style="positive"          # سبز
+            )
         ],
         [
-            KeyboardButton("📈 تحلیل آزمون"),
-            KeyboardButton("🔗 برنامه شخصی", style="info")
+            KeyboardButton(text="📈 تحلیل آزمون"),
+            KeyboardButton(
+                text="🔗 برنامه شخصی",
+                style="info"              # خاکستری/آبی کم‌رنگ
+            )
         ],
         [
-            KeyboardButton("🎫 کوپن‌های من", icon_custom_emoji_id="..."),
-            KeyboardButton("🛒 خرید کوپن", style="payment")
+            KeyboardButton(
+                text="🎫 کوپن‌های من",
+                icon_custom_emoji_id="..."   # آی‌دی واقعی
+            ),
+            KeyboardButton(
+                text="🛒 خرید کوپن",
+                style="primary"
+            )
         ],
         [
-            KeyboardButton("🔙 بازگشت", style="negative")   # مثلاً قرمز
+            KeyboardButton(
+                text="🔙 بازگشت",
+                style="negative"          # قرمز
+            )
         ]
     ]
+
     return ReplyKeyboardMarkup(
-        keyboard,
+        keyboard=keyboard,
         resize_keyboard=True,
-        one_time_keyboard=False,   # بهتر است false باشد برای منوهای اصلی
+        one_time_keyboard=False,
         input_field_placeholder="یکی از گزینه‌ها را انتخاب کنید..."
-        )
+)
 def get_coupon_method_keyboard() -> ReplyKeyboardMarkup:
     """کیبورد روش‌های کسب کوپن"""
     keyboard = [
