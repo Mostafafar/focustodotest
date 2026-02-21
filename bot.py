@@ -4192,9 +4192,6 @@ async def send_midday_report(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 
-        # اگر جلسه‌ای نبود
-        
-            
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """دستور /report - نمایش گزارش مطالعه ۲۴ ساعت گذشته"""
     user_id = update.effective_user.id
@@ -4207,22 +4204,17 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         now = datetime.now(IRAN_TZ)
         yesterday = now - timedelta(hours=24)
         
+        # timestamp بر اساس زمان ایران
         now_timestamp = int(now.timestamp())
         yesterday_timestamp = int(yesterday.timestamp())
         
-        now_jdate = jdatetime.datetime.fromgregorian(datetime=now)
-        yesterday_jdate = jdatetime.datetime.fromgregorian(datetime=yesterday)
-        
-        now_jalali = now_jdate.strftime("%Y/%m/%d")
-        yesterday_jalali = yesterday_jdate.strftime("%Y/%m/%d")
-        
         logger.info(f"📊 گزارش ۲۴ساعته برای کاربر {user_id}")
+        logger.info(f"   الان در ایران: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"   ۲۴ ساعت قبل: {yesterday.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"   بازه تایم‌استمپ: {yesterday_timestamp} تا {now_timestamp}")
-        logger.info(f"   بازه شمسی: {yesterday_jalali} تا {now_jalali}")
-        logger.info(f"   ساعت الان: {now.strftime('%H:%M:%S')}")
         
-        # روش 1: بر اساس timestamp (برای جلسات جدید)
-        query_timestamp = """
+        # کوئری با timestamp
+        query = """
         SELECT 
             session_id,
             subject,
@@ -4234,123 +4226,24 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         WHERE 
             user_id = %s 
             AND completed = TRUE
-            AND start_time IS NOT NULL
             AND start_time >= %s
             AND start_time <= %s
         ORDER BY start_time DESC
         """
         
-        results_timestamp = db.execute_query(
-            query_timestamp, 
-            (user_id, yesterday_timestamp, now_timestamp), 
-            fetchall=True
-        )
+        results = db.execute_query(query, (user_id, yesterday_timestamp, now_timestamp), fetchall=True)
         
-        logger.info(f"   روش1 (timestamp) - تعداد جلسات: {len(results_timestamp) if results_timestamp else 0}")
+        logger.info(f"   تعداد جلسات پیدا شده: {len(results) if results else 0}")
         
-        if results_timestamp:
-            for r in results_timestamp[:3]:
+        if results:
+            for r in results:
                 dt = datetime.fromtimestamp(r[4], IRAN_TZ)
                 logger.info(f"     → {r[1]} | {r[3]}د | {dt.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # روش 2: بر اساس تاریخ شمسی (برای جلسات قدیمی‌تر یا بدون timestamp)
-        # اینجا باید هم دیروز و هم امروز رو بررسی کنیم
-        query_date = """
-        SELECT 
-            session_id,
-            subject,
-            topic,
-            minutes,
-            start_time,
-            date
-        FROM study_sessions
-        WHERE 
-            user_id = %s 
-            AND completed = TRUE
-            AND date IN (%s, %s)
-        ORDER BY 
-            CASE 
-                WHEN start_time IS NOT NULL THEN start_time 
-                ELSE 0 
-            END DESC
-        """
-        
-        results_date = db.execute_query(
-            query_date, 
-            (user_id, yesterday_jalali, now_jalali), 
-            fetchall=True
-        )
-        
-        logger.info(f"   روش2 (تاریخ شمسی) - تعداد جلسات: {len(results_date) if results_date else 0}")
-        
-        if results_date:
-            for r in results_date[:3]:
-                if r[4]:  # اگه timestamp داره
-                    dt = datetime.fromtimestamp(r[4], IRAN_TZ)
-                    logger.info(f"     → {r[1]} | {r[3]}د | {dt.strftime('%Y-%m-%d %H:%M:%S')} | date={r[5]}")
-                else:
-                    logger.info(f"     → {r[1]} | {r[3]}د | NO_TIMESTAMP | date={r[5]}")
-        
-        # ترکیب نتایج
-        sessions = []
-        seen_ids = set()
-        
-        # اضافه کردن نتایج روش timestamp
-        if results_timestamp:
-            for row in results_timestamp:
-                if row[0] not in seen_ids:
-                    sessions.append(row)
-                    seen_ids.add(row[0])
-        
-        # اضافه کردن نتایج روش تاریخ شمسی
-        if results_date:
-            for row in results_date:
-                if row[0] not in seen_ids:
-                    # بررسی کنیم آیا واقعاً در ۲۴ ساعت گذشته هست
-                    if row[4]:  # اگه timestamp داره
-                        if row[4] >= yesterday_timestamp and row[4] <= now_timestamp:
-                            sessions.append(row)
-                            seen_ids.add(row[0])
-                        else:
-                            logger.info(f"     ⏭️ رد شد: جلسه {row[0]} خارج از بازه زمانی")
-                    else:
-                        # اگه timestamp نداره، بر اساس تاریخ شمسی تصمیم بگیر
-                        if row[5] == now_jalali:
-                            # جلسات امروز رو اضافه کن (چون امروز در بازه ۲۴ ساعته هست)
-                            sessions.append(row)
-                            seen_ids.add(row[0])
-                        elif row[5] == yesterday_jalali:
-                            # جلسات دیروز رو با احتیاط اضافه کن (اگه ساعتش نامشخصه، بهتره اضافه نکنیم)
-                            logger.info(f"     ⏭️ رد شد: جلسه دیروز بدون timestamp")
-        
-        # مرتب‌سازی نهایی
-        sessions.sort(key=lambda x: x[4] if x[4] else 0, reverse=True)
-        
-        logger.info(f"   ترکیب نهایی - تعداد جلسات یکتا: {len(sessions)}")
-        
-        if sessions:
-            for i, r in enumerate(sessions[:5]):
-                if r[4]:
-                    dt = datetime.fromtimestamp(r[4], IRAN_TZ)
-                    logger.info(f"     → نهایی {i+1}: {r[1]} | {r[3]}د | {dt.strftime('%Y-%m-%d %H:%M:%S')} | date={r[5]}")
-                else:
-                    logger.info(f"     → نهایی {i+1}: {r[1]} | {r[3]}د | NO_TIMESTAMP | date={r[5]}")
-        
-        # اگر جلسه‌ای نبود
-        if not sessions:
-            text = f"""📭 <b>گزارش ۲۴ ساعت گذشته</b>
-
-⏰ بازه: {yesterday.strftime('%H:%M')} - {now.strftime('%H:%M')}
-📅 تاریخ امروز: {now_jalali}
-📅 تاریخ دیروز: {yesterday_jalali}
-
-❌ <b>هیچ جلسه‌ای در ۲۴ ساعت گذشته ثبت نشده!</b>
-
-📊 <b>آخرین جلسات شما:</b>"""
-
-            # دریافت آخرین جلسات
+        else:
+            # اگر جلسه‌ای پیدا نشد، ببینیم آخرین جلسه کی بوده
             query_last = """
             SELECT 
+                session_id,
                 subject,
                 topic,
                 minutes,
@@ -4358,43 +4251,50 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 date
             FROM study_sessions
             WHERE user_id = %s AND completed = TRUE
-            ORDER BY 
-                CASE 
-                    WHEN start_time IS NOT NULL THEN start_time 
-                    ELSE 0 
-                END DESC,
-                session_id DESC
-            LIMIT 5
+            ORDER BY start_time DESC
+            LIMIT 1
             """
             
-            last_sessions = db.execute_query(query_last, (user_id,), fetchall=True)
+            last = db.execute_query(query_last, (user_id,), fetch=True)
             
-            if last_sessions:
-                for session in last_sessions[:3]:
-                    subject, topic, minutes, start_time, date = session
-                    
-                    if start_time:
-                        dt = datetime.fromtimestamp(start_time, IRAN_TZ)
-                        time_str = dt.strftime("%Y/%m/%d %H:%M")
-                    else:
-                        time_str = date if date else "نامشخص"
-                    
-                    topic_display = topic if topic and topic.strip() else "بدون مبحث"
-                    if len(topic_display) > 30:
-                        topic_display = topic_display[:30] + "..."
-                    
-                    text += f"\n• {time_str} | {subject} - {topic_display} | {minutes} دقیقه"
+            if last:
+                last_time = datetime.fromtimestamp(last[4], IRAN_TZ)
+                hours_ago = (now - last_time).total_seconds() / 3600
+                
+                text = f"""📭 <b>گزارش ۲۴ ساعت گذشته</b>
+
+⏰ بازه: {yesterday.strftime('%H:%M')} - {now.strftime('%H:%M')}
+📅 تاریخ: {now.strftime('%Y/%m/%d')}
+
+❌ <b>هیچ جلسه‌ای در ۲۴ ساعت گذشته ثبت نشده!</b>
+
+📊 <b>آخرین جلسه:</b>
+• {last[1]} - {last[2] or 'بدون مبحث'}
+• {last[3]} دقیقه
+• {last_time.strftime('%Y/%m/%d %H:%M')}
+• {hours_ago:.1f} ساعت پیش
+
+🔥 برای شروع یک جلسه جدید از منوی اصلی استفاده کن!"""
+                
+                await update.message.reply_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=get_main_menu_keyboard()
+                )
+                return
             else:
-                text += "\n• هنوز هیچ جلسه‌ای ثبت نکردی!"
-            
-            text += "\n\n🔥 برای شروع یک جلسه جدید از منوی اصلی استفاده کن!"
-            
-            await update.message.reply_text(
-                text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=get_main_menu_keyboard()
-            )
-            return
+                await update.message.reply_text(
+                    "📭 شما هنوز هیچ جلسه‌ای ثبت نکردید!",
+                    reply_markup=get_main_menu_keyboard()
+                )
+                return
+        
+        # ادامه کد برای نمایش گزارش...
+        
+    
+        
+        # مرتب‌سازی نهایی
+        
         
         
 
