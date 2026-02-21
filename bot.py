@@ -1695,17 +1695,28 @@ def update_user_info(user_id: int, grade: str, field: str) -> bool:
 # -----------------------------------------------------------
 
 def start_study_session(user_id: int, subject: str, topic: str, minutes: int) -> Optional[int]:
-    """شروع جلسه مطالعه جدید"""
+    """شروع جلسه مطالعه جدید با زمان ایران"""
     conn = None
     cursor = None
     
     try:
         logger.info(f"🔍 شروع جلسه مطالعه - کاربر: {user_id}, درس: {subject}, مبحث: {topic}, زمان: {minutes} دقیقه")
         
+        # اعتبارسنجی ورودی‌ها
+        if not subject or not subject.strip():
+            logger.error(f"❌ درس وارد نشده است")
+            return None
+        
+        if minutes < MIN_STUDY_TIME or minutes > MAX_STUDY_TIME:
+            logger.error(f"❌ زمان نامعتبر: {minutes} (باید بین {MIN_STUDY_TIME} تا {MAX_STUDY_TIME} باشد)")
+            return None
+        
+        # اتصال به دیتابیس
         conn = db.get_connection()
         cursor = conn.cursor()
         
-        query_check = "SELECT user_id, is_active FROM users WHERE user_id = %s"
+        # بررسی وجود و فعال بودن کاربر
+        query_check = "SELECT user_id, is_active, username FROM users WHERE user_id = %s"
         cursor.execute(query_check, (user_id,))
         user_check = cursor.fetchone()
         
@@ -1715,35 +1726,63 @@ def start_study_session(user_id: int, subject: str, topic: str, minutes: int) ->
             logger.error(f"❌ کاربر {user_id} در جدول users وجود ندارد")
             return None
         
-        if not user_check[1]:
+        if not user_check[1]:  # is_active = False
             logger.error(f"❌ کاربر {user_id} فعال نیست")
             return None
         
-        start_timestamp = int(time.time())
-        date_str, _ = get_iran_time()  # تاریخ شمسی
+        username = user_check[2] or "نامشخص"
         
-        query = """
-        INSERT INTO study_sessions (user_id, subject, topic, minutes, start_time, date)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        # زمان ایران
+        now_iran = datetime.now(IRAN_TZ)
+        start_timestamp = int(now_iran.timestamp())
+        
+        # تاریخ شمسی برای نمایش
+        jdate = jdatetime.datetime.fromgregorian(datetime=now_iran)
+        date_str = jdate.strftime("%Y/%m/%d")  # فرمت: 1404/12/02
+        time_str = now_iran.strftime("%H:%M:%S")
+        
+        logger.info(f"   زمان شروع (ایران): {now_iran.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"   timestamp: {start_timestamp}")
+        logger.info(f"   تاریخ شمسی: {date_str}")
+        logger.info(f"   ساعت: {time_str}")
+        
+        # ثبت جلسه در دیتابیس
+        query_insert = """
+        INSERT INTO study_sessions 
+            (user_id, subject, topic, minutes, start_time, date, completed)
+        VALUES (%s, %s, %s, %s, %s, %s, FALSE)
         RETURNING session_id
         """
         
-        logger.info(f"🔍 در حال ثبت جلسه در دیتابیس...")
-        cursor.execute(query, (user_id, subject, topic, minutes, start_timestamp, date_str))
+        cursor.execute(query_insert, (user_id, subject.strip(), topic.strip(), minutes, start_timestamp, date_str))
         
         result = cursor.fetchone()
         
-        if result:
-            session_id = result[0]
-            conn.commit()
-            logger.info(f"✅ جلسه مطالعه شروع شد: {session_id} برای کاربر {user_id}")
-            return session_id
+        if not result:
+            logger.error(f"❌ خطا در ثبت جلسه در دیتابیس - هیچ session_id برگشت داده نشد")
+            conn.rollback()
+            return None
         
-        logger.error(f"❌ خطا در ثبت جلسه در دیتابیس")
+        session_id = result[0]
+        conn.commit()
+        
+        logger.info(f"✅ جلسه مطالعه شروع شد: {session_id} برای کاربر {user_id}")
+        logger.info(f"   جزئیات: درس={subject}, مبحث={topic}, زمان={minutes} دقیقه")
+        
+        # لاگ برای دیباگ بیشتر
+        logger.info(f"   رکورد جلسه با موفقیت در دیتابیس ذخیره شد")
+        
+        # برگرداندن session_id
+        return session_id
+        
+    except psycopg2.Error as e:
+        logger.error(f"❌ خطای دیتابیس در شروع جلسه مطالعه: {e}", exc_info=True)
+        if conn:
+            conn.rollback()
         return None
         
     except Exception as e:
-        logger.error(f"❌ خطا در شروع جلسه مطالعه: {e}", exc_info=True)
+        logger.error(f"❌ خطای غیرمنتظره در شروع جلسه مطالعه: {e}", exc_info=True)
         if conn:
             conn.rollback()
         return None
@@ -1751,124 +1790,164 @@ def start_study_session(user_id: int, subject: str, topic: str, minutes: int) ->
     finally:
         if cursor:
             cursor.close()
+            logger.info("🔒 Cursor بسته شد")
         if conn:
             db.return_connection(conn)
+            logger.info("🔌 Connection بازگردانده شد")
 
 
+        
+        
+        # 🔴 اضافه شده: بروزرسانی اتاق‌های رقابت
 def complete_study_session(session_id: int) -> Optional[Dict]:
-    """اتمام جلسه مطالعه"""
+    """اتمام جلسه مطالعه با زمان ایران"""
+    conn = None
+    cursor = None
+    
     try:
         logger.info(f"🔍 تکمیل جلسه مطالعه - session_id: {session_id}")
         
-        end_timestamp = int(time.time())
+        # زمان اتمام بر اساس ایران
+        now_iran = datetime.now(IRAN_TZ)
+        end_timestamp = int(now_iran.timestamp())
+        
+        logger.info(f"   زمان اتمام (ایران): {now_iran.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"   end_timestamp: {end_timestamp}")
+        
+        # دریافت اطلاعات جلسه
+        conn = db.get_connection()
+        cursor = conn.cursor()
         
         query_check = """
         SELECT user_id, subject, topic, minutes, start_time, completed, date 
         FROM study_sessions 
         WHERE session_id = %s
         """
-        session_check = db.execute_query(query_check, (session_id,), fetch=True)
+        cursor.execute(query_check, (session_id,))
+        session_check = cursor.fetchone()
         
         if not session_check:
             logger.error(f"❌ جلسه {session_id} یافت نشد")
             return None
         
         user_id, subject, topic, planned_minutes, start_time, completed, session_date = session_check
+        
         logger.info(f"🔍 اطلاعات جلسه: کاربر={user_id}, درس={subject}, تاریخ={session_date}, تکمیل شده={completed}")
         
         if completed:
             logger.warning(f"⚠️ جلسه {session_id} قبلاً تکمیل شده است")
             return None
         
-        actual_seconds = end_timestamp - start_time
-        actual_minutes = max(1, actual_seconds // 60)
+        # محاسبه زمان واقعی مطالعه
+        if start_time and start_time > 0:
+            actual_seconds = end_timestamp - start_time
+            actual_minutes = max(1, actual_seconds // 60)
+        else:
+            logger.warning(f"⚠️ جلسه {session_id} start_time ندارد، از زمان برنامه‌ریزی شده استفاده می‌شود")
+            actual_minutes = planned_minutes
+            actual_seconds = planned_minutes * 60
         
         logger.info(f"⏱ زمان برنامه‌ریزی شده: {planned_minutes} دقیقه")
         logger.info(f"⏱ زمان واقعی: {actual_minutes} دقیقه ({actual_seconds} ثانیه)")
         
+        # زمان نهایی (حداکثر به اندازه زمان برنامه‌ریزی شده)
         final_minutes = min(actual_minutes, planned_minutes)
         
         logger.info(f"✅ زمان نهایی محاسبه: {final_minutes} دقیقه")
         
-        query = """
+        # بروزرسانی جلسه
+        query_update = """
         UPDATE study_sessions
         SET end_time = %s, completed = TRUE, minutes = %s
         WHERE session_id = %s AND completed = FALSE
         RETURNING user_id, subject, topic, start_time, date
         """
         
-        logger.info(f"🔍 در حال بروزرسانی جلسه به تکمیل شده...")
-        result = db.execute_query(query, (end_timestamp, final_minutes, session_id), fetch=True)
+        cursor.execute(query_update, (end_timestamp, final_minutes, session_id))
+        result = cursor.fetchone()
         
         if not result:
             logger.error(f"❌ بروزرسانی جلسه ناموفق بود")
+            conn.rollback()
             return None
         
         user_id, subject, topic, start_time, session_date = result
+        conn.commit()
         
+        logger.info(f"✅ جلسه {session_id} با موفقیت بروزرسانی شد")
+        
+        # بروزرسانی آمار کلی کاربر
         try:
-            query = """
+            query_user = """
             UPDATE users
             SET 
                 total_study_time = total_study_time + %s,
                 total_sessions = total_sessions + 1
             WHERE user_id = %s
             """
-            rows_updated = db.execute_query(query, (final_minutes, user_id))
-            logger.info(f"✅ آمار کاربر {user_id} بروزرسانی شد: {rows_updated} رکورد")
+            cursor.execute(query_user, (final_minutes, user_id))
+            conn.commit()
+            logger.info(f"✅ آمار کاربر {user_id} بروزرسانی شد")
         except Exception as e:
             logger.warning(f"⚠️ خطا در بروزرسانی آمار کاربر {user_id}: {e}")
+            conn.rollback()
         
+        # بروزرسانی رتبه‌بندی روزانه
         try:
             # تبدیل تاریخ شمسی به میلادی برای دیتابیس
             if '/' in session_date:
-                # تاریخ شمسی است، تبدیل کن
                 session_date_formatted = convert_jalali_to_gregorian(session_date)
                 logger.info(f"📅 تاریخ شمسی {session_date} → میلادی {session_date_formatted}")
             else:
-                # تاریخ میلادی است
                 session_date_formatted = session_date
-                
+            
             logger.info(f"📅 بروزرسانی daily_rankings برای تاریخ: {session_date_formatted}")
             
-            query = """
+            query_rank = """
             INSERT INTO daily_rankings (user_id, date, total_minutes)
             VALUES (%s, %s, %s)
             ON CONFLICT (user_id, date) DO UPDATE SET
                 total_minutes = daily_rankings.total_minutes + EXCLUDED.total_minutes
             """
-            db.execute_query(query, (user_id, session_date_formatted, final_minutes))
+            cursor.execute(query_rank, (user_id, session_date_formatted, final_minutes))
+            conn.commit()
             logger.info(f"✅ رتبه‌بندی روزانه برای کاربر {user_id} بروزرسانی شد")
         except Exception as e:
             logger.warning(f"⚠️ خطا در بروزرسانی رتبه‌بندی: {e}", exc_info=True)
+            conn.rollback()
         
-        # 🔴 اضافه شده: بروزرسانی اتاق‌های رقابت
+        # بروزرسانی اتاق‌های رقابت
         try:
             # بررسی آیا کاربر در اتاق رقابتی فعال است
-            query = """
+            query_room = """
             SELECT rp.room_code 
             FROM room_participants rp
             JOIN competition_rooms cr ON rp.room_code = cr.room_code
             WHERE rp.user_id = %s AND cr.status = 'active'
             """
-            
-            active_rooms = db.execute_query(query, (user_id,), fetchall=True)
+            cursor.execute(query_room, (user_id,))
+            active_rooms = cursor.fetchall()
             
             if active_rooms:
                 for room in active_rooms:
                     room_code = room[0]
                     # بروزرسانی مطالعه کاربر در اتاق
-                    update_user_study_in_room(
-                        user_id, room_code, 
-                        final_minutes, subject, topic
-                    )
+                    query_update_room = """
+                    UPDATE room_participants
+                    SET total_minutes = total_minutes + %s,
+                        current_subject = %s,
+                        current_topic = %s
+                    WHERE user_id = %s AND room_code = %s
+                    """
+                    cursor.execute(query_update_room, (final_minutes, subject, topic, user_id, room_code))
                     
-                    # لاگ برای دیباگ
                     logger.info(f"🏆 بروزرسانی اتاق رقابت: کاربر {user_id} در اتاق {room_code} - {final_minutes} دقیقه")
-                    
+                conn.commit()
         except Exception as e:
             logger.warning(f"⚠️ خطا در بروزرسانی اتاق رقابت: {e}")
+            conn.rollback()
         
+        # آماده‌سازی داده‌های برگشتی
         session_data = {
             "user_id": user_id,
             "subject": subject,
@@ -1879,7 +1958,9 @@ def complete_study_session(session_id: int) -> Optional[Dict]:
             "start_time": start_time,
             "end_time": end_timestamp,
             "session_id": session_id,
-            "date": session_date
+            "date": session_date,
+            "start_time_iran": datetime.fromtimestamp(start_time, IRAN_TZ).strftime("%Y-%m-%d %H:%M:%S") if start_time else None,
+            "end_time_iran": now_iran.strftime("%Y-%m-%d %H:%M:%S")
         }
         
         logger.info(f"✅ جلسه مطالعه تکمیل شد: {session_id} - زمان: {final_minutes} دقیقه")
@@ -1887,7 +1968,32 @@ def complete_study_session(session_id: int) -> Optional[Dict]:
         
     except Exception as e:
         logger.error(f"❌ خطا در تکمیل جلسه مطالعه: {e}", exc_info=True)
+        if conn:
+            conn.rollback()
         return None
+        
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db.return_connection(conn)
+            logger.info("🔌 Connection بازگردانده شد")
+def convert_jalali_to_gregorian(jalali_date_str: str) -> str:
+    """تبدیل تاریخ شمسی به میلادی (YYYY-MM-DD)"""
+    try:
+        if '/' in jalali_date_str:
+            parts = jalali_date_str.split('/')
+            if len(parts) == 3:
+                year, month, day = map(int, parts)
+                # تبدیل تاریخ شمسی به میلادی
+                jdate = jdatetime.date(year, month, day)
+                gdate = jdate.togregorian()
+                return gdate.strftime("%Y-%m-%d")
+    except Exception as e:
+        logger.error(f"❌ خطا در تبدیل تاریخ {jalali_date_str}: {e}")
+    
+    # در صورت خطا، تاریخ امروز را برگردان
+    return datetime.now(IRAN_TZ).strftime("%Y-%m-%d")
 async def complete_study_button(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
     """اتمام جلسه مطالعه با دکمه"""
     if "current_session" not in context.user_data:
