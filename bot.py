@@ -4307,19 +4307,18 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     
     try:
-        now = datetime.now(IRAN_TZ)
-        yesterday = now - timedelta(hours=24)
+        now_iran = datetime.now(IRAN_TZ)
+        yesterday_iran = now_iran - timedelta(hours=24)
         
-        # timestamp بر اساس زمان ایران
-        now_timestamp = int(now.timestamp())
-        yesterday_timestamp = int(yesterday.timestamp())
+        now_timestamp = int(now_iran.timestamp())
+        yesterday_timestamp = int(yesterday_iran.timestamp())
         
         logger.info(f"📊 گزارش ۲۴ساعته برای کاربر {user_id}")
-        logger.info(f"   الان در ایران: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"   ۲۴ ساعت قبل: {yesterday.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"   الان در ایران: {now_iran.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"   ۲۴ ساعت قبل: {yesterday_iran.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"   بازه تایم‌استمپ: {yesterday_timestamp} تا {now_timestamp}")
         
-        # کوئری با timestamp
+        # کوئری با timestamp (همه جلسات بر اساس timestamp ذخیره شده)
         query = """
         SELECT 
             session_id,
@@ -4345,8 +4344,11 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             for r in results:
                 dt = datetime.fromtimestamp(r[4], IRAN_TZ)
                 logger.info(f"     → {r[1]} | {r[3]}د | {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # ادامه کد نمایش گزارش...
+            
         else:
-            # اگر جلسه‌ای پیدا نشد، ببینیم آخرین جلسه کی بوده
+            # نمایش آخرین جلسات
             query_last = """
             SELECT 
                 session_id,
@@ -4358,35 +4360,36 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             FROM study_sessions
             WHERE user_id = %s AND completed = TRUE
             ORDER BY start_time DESC
-            LIMIT 1
+            LIMIT 3
             """
             
-            last = db.execute_query(query_last, (user_id,), fetch=True)
+            last_sessions = db.execute_query(query_last, (user_id,), fetchall=True)
             
-            if last:
-                last_time = datetime.fromtimestamp(last[4], IRAN_TZ)
-                hours_ago = (now - last_time).total_seconds() / 3600
-                
-                text = f"""📭 <b>گزارش ۲۴ ساعت گذشته</b>
+            text = f"""📭 <b>گزارش ۲۴ ساعت گذشته</b>
 
-⏰ بازه: {yesterday.strftime('%H:%M')} - {now.strftime('%H:%M')}
-📅 تاریخ: {now.strftime('%Y/%m/%d')}
+⏰ بازه: {yesterday_iran.strftime('%H:%M')} - {now_iran.strftime('%H:%M')}
+📅 تاریخ: {now_iran.strftime('%Y/%m/%d')}
 
-❌ <b>هیچ جلسه‌ای در ۲۴ ساعت گذشته ثبت نشده!</b>
+❌ <b>هیچ جلسه‌ای در ۲۴ ساعت گذشته ثبت نشده!</b>"""
 
-📊 <b>آخرین جلسه:</b>
-• {last[1]} - {last[2] or 'بدون مبحث'}
-• {last[3]} دقیقه
-• {last_time.strftime('%Y/%m/%d %H:%M')}
-• {hours_ago:.1f} ساعت پیش
-
-🔥 برای شروع یک جلسه جدید از منوی اصلی استفاده کن!"""
-                
-                await update.message.reply_text(
-                    text,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=get_main_menu_keyboard()
-                )
+            if last_sessions:
+                text += "\n\n📊 <b>آخرین جلسات شما:</b>"
+                for session in last_sessions:
+                    dt = datetime.fromtimestamp(session[4], IRAN_TZ)
+                    hours_ago = (now_iran - dt).total_seconds() / 3600
+                    
+                    text += f"\n• {session[1]} - {session[2] or 'بدون مبحث'}"
+                    text += f"\n  {session[3]} دقیقه | {dt.strftime('%Y/%m/%d %H:%M')} ({hours_ago:.1f} ساعت پیش)"
+            
+            text += "\n\n🔥 برای شروع یک جلسه جدید از منوی اصلی استفاده کن!"
+            
+            await update.message.reply_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_main_menu_keyboard()
+            )
+        
+    
                 return
             else:
                 await update.message.reply_text(
