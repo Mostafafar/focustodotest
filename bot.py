@@ -4211,24 +4211,20 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         now = datetime.now(IRAN_TZ)
         yesterday = now - timedelta(hours=24)
         
-        # فرمت‌های مختلف تاریخ
         now_timestamp = int(time.time())
         yesterday_timestamp = int(yesterday.timestamp())
         
-        # تاریخ شمسی برای جستجو در فیلد date
         now_jdate = jdatetime.datetime.fromgregorian(datetime=now)
         yesterday_jdate = jdatetime.datetime.fromgregorian(datetime=yesterday)
         
         now_jalali = now_jdate.strftime("%Y/%m/%d")
         yesterday_jalali = yesterday_jdate.strftime("%Y/%m/%d")
         
-        logger.info(f"🔍 دریافت گزارش ۲۴ ساعت گذشته برای کاربر {user_id}")
-        logger.info(f"   بازه تایم‌استمپ: {yesterday_timestamp} - {now_timestamp}")
-        logger.info(f"   بازه شمسی: {yesterday_jalali} - {now_jalali}")
+        # ========== لاگ اولیه ==========
+        logger.info(f"📊 گزارش ۲۴ساعته برای کاربر {user_id}")
+        logger.info(f"   بازه تایم‌استمپ: {yesterday_timestamp} تا {now_timestamp}")
+        logger.info(f"   بازه شمسی تقریبی: {yesterday_jalali} تا {now_jalali}")
         
-        # دریافت جلسات ۲۴ ساعت گذشته با دو روش:
-        # 1. بر اساس timestamp (دقیق‌ترین روش)
-        # 2. بر اساس تاریخ شمسی (برای جلساتی که timestamp ندارن)
         query = """
         SELECT 
             session_id,
@@ -4241,21 +4237,22 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         WHERE 
             user_id = %s 
             AND completed = TRUE
-            AND (
-                -- روش 1: بر اساس timestamp (اگر موجود باشد)
-                (start_time >= %s AND start_time <= %s)
-                OR
-                -- روش 2: بر اساس تاریخ شمسی (برای جلسات قدیمی‌تر)
-                (date IN (%s, %s))
-            )
+            AND start_time >= %s
+            AND start_time <= %s
         ORDER BY start_time DESC
         """
         
-        results = db.execute_query(
-            query, 
-            (user_id, yesterday_timestamp, now_timestamp, yesterday_jalali, now_jalali),
-            fetchall=True
-        )
+        results = db.execute_query(query, (user_id, yesterday_timestamp, now_timestamp), fetchall=True)
+        
+        # ========== لاگ نتایج ==========
+        logger.info(f"   تعداد جلسات پیدا شده با تایم‌استمپ: {len(results) if results else 0}")
+        
+        if results:
+            for i, r in enumerate(results[:5]):  # فقط ۵ تای اول برای لاگ
+                session_id, subject, topic, minutes, start_time, date = r
+                logger.info(f"     → جلسه {i+1}: ID={session_id} | {subject} | {minutes} دقیقه | start_time={start_time} | date={date}")
+        
+        # بقیه کد...
         
         sessions = []
         for row in results:
