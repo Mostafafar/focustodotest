@@ -4199,19 +4199,15 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """دستور /report - نمایش گزارش مطالعه ۲۴ ساعت گذشته"""
     user_id = update.effective_user.id
     
-    # بررسی فعال بودن کاربر
     if not is_user_active(user_id):
-        await update.message.reply_text(
-            "❌ حساب کاربری شما فعال نیست.\n"
-            "لطفا منتظر تأیید ادمین باشید."
-        )
+        await update.message.reply_text("❌ حساب کاربری شما فعال نیست.")
         return
     
     try:
         now = datetime.now(IRAN_TZ)
         yesterday = now - timedelta(hours=24)
         
-        now_timestamp = int(time.time())
+        now_timestamp = int(now.timestamp())
         yesterday_timestamp = int(yesterday.timestamp())
         
         now_jdate = jdatetime.datetime.fromgregorian(datetime=now)
@@ -4220,11 +4216,11 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         now_jalali = now_jdate.strftime("%Y/%m/%d")
         yesterday_jalali = yesterday_jdate.strftime("%Y/%m/%d")
         
-        # ========== لاگ اولیه ==========
         logger.info(f"📊 گزارش ۲۴ساعته برای کاربر {user_id}")
         logger.info(f"   بازه تایم‌استمپ: {yesterday_timestamp} تا {now_timestamp}")
-        logger.info(f"   بازه شمسی تقریبی: {yesterday_jalali} تا {now_jalali}")
+        logger.info(f"   بازه شمسی: {yesterday_jalali} تا {now_jalali}")
         
+        # روش اصلی: بر اساس timestamp
         query = """
         SELECT 
             session_id,
@@ -4243,6 +4239,39 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         """
         
         results = db.execute_query(query, (user_id, yesterday_timestamp, now_timestamp), fetchall=True)
+        
+        logger.info(f"   تعداد جلسات پیدا شده: {len(results) if results else 0}")
+        
+        if results:
+            for r in results[:3]:
+                dt = datetime.fromtimestamp(r[4], IRAN_TZ)
+                logger.info(f"     → {r[1]} | {r[3]}د | {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+        else:
+            # اگر جلسه‌ای با timestamp پیدا نشد، بر اساس تاریخ شمسی جستجو کن
+            logger.info("   جستجو بر اساس تاریخ شمسی...")
+            
+            query_date = """
+            SELECT 
+                session_id,
+                subject,
+                topic,
+                minutes,
+                start_time,
+                date
+            FROM study_sessions
+            WHERE 
+                user_id = %s 
+                AND completed = TRUE
+                AND date = %s
+            ORDER BY start_time DESC
+            """
+            
+            results = db.execute_query(query_date, (user_id, now_jalali), fetchall=True)
+            logger.info(f"   تعداد جلسات امروز: {len(results) if results else 0}")
+        
+        # بقیه کد...
+        
+    
         
         # ========== لاگ نتایج ==========
         logger.info(f"   تعداد جلسات پیدا شده با تایم‌استمپ: {len(results) if results else 0}")
