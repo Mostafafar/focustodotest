@@ -4390,13 +4390,7 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
         
     
-                return
-            else:
-                await update.message.reply_text(
-                    "📭 شما هنوز هیچ جلسه‌ای ثبت نکردید!",
-                    reply_markup=get_main_menu_keyboard()
-                )
-                return
+                
         
         # ادامه کد برای نمایش گزارش...
         
