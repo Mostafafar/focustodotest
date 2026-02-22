@@ -4181,9 +4181,19 @@ async def show_user_requests(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 )
 
 async def send_midday_report(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """ارسال گزارش نیم‌روز ساعت 15:00"""
+    """ارسال گزارش نیم‌روز ساعت 15:00 با تاریخ و ساعت شمسی"""
     try:
         logger.info("🕒 شروع ارسال گزارش‌های نیم‌روز...")
+        
+        now_iran = datetime.now(IRAN_TZ)
+        
+        # تبدیل به تاریخ و ساعت شمسی
+        now_jdate = jdatetime.datetime.fromgregorian(datetime=now_iran)
+        date_str = now_jdate.strftime("%Y/%m/%d")  # تاریخ شمسی
+        time_str = now_iran.strftime("%H:%M")      # ساعت
+        
+        logger.info(f"📅 تاریخ گزارش: {date_str}")
+        logger.info(f"⏰ ساعت گزارش: {time_str}")
         
         # دریافت کاربران فعال
         query = """
@@ -4198,7 +4208,6 @@ async def send_midday_report(context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.info("📭 هیچ کاربر فعالی وجود ندارد")
             return
         
-        date_str, time_str = get_iran_time()
         total_sent = 0
         
         for row in results:
@@ -4210,33 +4219,52 @@ async def send_midday_report(context: ContextTypes.DEFAULT_TYPE) -> None:
             
             try:
                 # دریافت جلسات امروز
-                today_sessions = get_today_sessions(user_id)
+                today_jalali = date_str  # تاریخ شمسی امروز
+                
+                query_sessions = """
+                SELECT subject, topic, minutes, start_time
+                FROM study_sessions
+                WHERE user_id = %s AND date = %s AND completed = TRUE
+                ORDER BY start_time
+                """
+                
+                today_sessions = db.execute_query(query_sessions, (user_id, today_jalali), fetchall=True)
                 
                 # دریافت رتبه هفتگی
                 weekly_rank, weekly_minutes, gap_minutes = get_user_weekly_rank(user_id)
                 
-                # دریافت 5 نفر برتر هفتگی
+                # دریافت ۵ نفر برتر هفتگی
                 top_weekly = get_weekly_rankings(limit=5)
                 
-                # ساخت گزارش
+                # ساخت گزارش با تاریخ و ساعت شمسی
                 text = f"📊 <b>گزارش نیم‌روز شما</b>\n\n"
                 text += f"📅 <b>تاریخ:</b> {date_str}\n"
                 text += f"🕒 <b>زمان:</b> {time_str}\n\n"
                 
                 if today_sessions:
                     text += f"✅ <b>فعالیت‌های امروز:</b>\n"
-                    for i, session in enumerate(today_sessions, 1):
-                        start_time = session["start_time"]
-                        if isinstance(start_time, datetime):
-                            session_time = start_time.strftime("%H:%M")
+                    
+                    total_today = 0
+                    for session in today_sessions:
+                        subject, topic, minutes, start_time = session
+                        total_today += minutes
+                        
+                        # زمان شروع جلسه
+                        if start_time:
+                            dt = datetime.fromtimestamp(start_time, IRAN_TZ)
+                            session_time = dt.strftime("%H:%M")
                         else:
                             session_time = "??:??"
                         
-                        text += f"• {session_time} | {session['subject']} ({session['topic'][:30]}) | {session['minutes']} دقیقه\n"
+                        # کوتاه کردن مبحث
+                        topic_display = topic if topic and topic.strip() else "بدون مبحث"
+                        if len(topic_display) > 30:
+                            topic_display = topic_display[:30] + "..."
+                        
+                        text += f"• {session_time} | {subject} - {topic_display} | {minutes} دقیقه\n"
                     
-                    total_today = sum(s["minutes"] for s in today_sessions)
                     text += f"\n📈 <b>آمار امروز:</b>\n"
-                    text += f"⏰ مجموع: {total_today} دقیقه\n"
+                    text += f"⏰ مجموع: {total_today} دقیقه ({total_today//60} ساعت و {total_today%60} دقیقه)\n"
                     text += f"📖 جلسات: {len(today_sessions)} جلسه\n"
                 else:
                     text += f"📭 <b>هیچ فعالیتی امروز ثبت نکرده‌اید.</b>\n\n"
@@ -4246,7 +4274,6 @@ async def send_midday_report(context: ContextTypes.DEFAULT_TYPE) -> None:
                 for i, rank in enumerate(top_weekly[:5], 1):
                     medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i-1]
                     
-                    # دریافت نام کاربر
                     user_display = rank["username"] or "کاربر"
                     if user_display == "None":
                         user_display = "کاربر"
@@ -4268,11 +4295,31 @@ async def send_midday_report(context: ContextTypes.DEFAULT_TYPE) -> None:
                     text += f"🎯 شما در رتبه <b>{weekly_rank}</b> جدول هفتگی هستید\n"
                     
                     if gap_minutes > 0 and weekly_rank > 5:
-                        text += f"⏳ <b>{gap_minutes} دقیقه</b> تا ۵ نفر اول فاصله دارید\n"
+                        text += f"⏳ <b>{gap_minutes}</b> دقیقه تا ۵ نفر اول فاصله دارید\n"
                     
-                    text += f"⏰ مطالعه هفتگی شما: {weekly_minutes} دقیقه\n"
+                    weekly_hours = weekly_minutes // 60
+                    weekly_mins = weekly_minutes % 60
+                    if weekly_hours > 0 and weekly_mins > 0:
+                        weekly_display = f"{weekly_hours}h {weekly_mins}m"
+                    elif weekly_hours > 0:
+                        weekly_display = f"{weekly_hours}h"
+                    else:
+                        weekly_display = f"{weekly_mins}m"
+                    
+                    text += f"⏰ مطالعه هفتگی شما: {weekly_display}\n"
                 
-                text += f"\n💪 <i>ادامه بده! فردا می‌تونی جزو برترها باشی!</i>"
+                # نقل قول انگیزشی
+                import random
+                midday_quotes = [
+                    "💪 نصف روز فوق‌العاده بود! ادامه بده!",
+                    "🌟 تا اینجا عالی بودی، نصفه روز مونده!",
+                    "🔥 انرژی‌ت رو حفظ کن! بعدازظهر هم می‌توني بدرخشی!",
+                    "📚 هر دقیقه مطالعه، یک قدم به هدفت نزدیکترت می‌کنه!",
+                    "🎯 نصف روز تموم شد، ولی هنوز فرصت برای بهتر کردی!",
+                    "✨ ادامه بده! عصر هم می‌تونی عالی باشی!"
+                ]
+                
+                text += f"\n\n<i>{random.choice(midday_quotes)}</i>"
                 
                 # ارسال گزارش
                 await context.bot.send_message(
@@ -4285,7 +4332,9 @@ async def send_midday_report(context: ContextTypes.DEFAULT_TYPE) -> None:
                 mark_report_sent(user_id, "midday")
                 total_sent += 1
                 
-                await asyncio.sleep(0.1)  # تأخیر برای جلوگیری از محدودیت
+                logger.info(f"✅ گزارش نیم‌روز برای کاربر {user_id} ارسال شد - {len(today_sessions) if today_sessions else 0} جلسه")
+                
+                await asyncio.sleep(0.1)
                 
             except Exception as e:
                 logger.error(f"خطا در ارسال گزارش به کاربر {user_id}: {e}")
@@ -4294,10 +4343,7 @@ async def send_midday_report(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info(f"✅ گزارش نیم‌روز به {total_sent} کاربر ارسال شد")
         
     except Exception as e:
-        logger.error(f"خطا در ارسال گزارش‌های نیم‌روز: {e}")
-
-
-
+        logger.error(f"خطا در ارسال گزارش‌های نیم‌روز: {e}", exc_info=True)
 
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """دستور /report - نمایش گزارش مطالعه ۲۴ ساعت گذشته"""
@@ -4560,10 +4606,29 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
 
     
+
+                
+                
+                
 async def send_night_report(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """ارسال گزارش شبانه ساعت 23:00 - نمایش مبحث و جزئیات کامل"""
+    """ارسال گزارش شبانه ساعت 23:00 با تاریخ و ساعت شمسی"""
     try:
         logger.info("🌙 شروع ارسال گزارش‌های شبانه...")
+        
+        now_iran = datetime.now(IRAN_TZ)
+        
+        # تبدیل به تاریخ و ساعت شمسی
+        now_jdate = jdatetime.datetime.fromgregorian(datetime=now_iran)
+        date_str = now_jdate.strftime("%Y/%m/%d")  # تاریخ شمسی
+        time_str = now_iran.strftime("%H:%M")      # ساعت
+        
+        # تاریخ دیروز به شمسی
+        yesterday_iran = now_iran - timedelta(days=1)
+        yesterday_jdate = jdatetime.datetime.fromgregorian(datetime=yesterday_iran)
+        yesterday_str = yesterday_jdate.strftime("%Y/%m/%d")
+        
+        logger.info(f"📅 تاریخ گزارش: {date_str}")
+        logger.info(f"⏰ ساعت گزارش: {time_str}")
         
         # دریافت کاربران فعال
         query = """
@@ -4578,8 +4643,6 @@ async def send_night_report(context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.info("📭 هیچ کاربر فعالی وجود ندارد")
             return
         
-        date_str, _ = get_iran_time()  # فرمت YYYY-MM-DD
-        time_str = "23:00"
         total_sent = 0
         
         for row in results:
@@ -4590,83 +4653,60 @@ async def send_night_report(context: ContextTypes.DEFAULT_TYPE) -> None:
                 continue
             
             try:
-                # دریافت آمار امروز از daily_rankings
-                query_today = """
-                SELECT total_minutes FROM daily_rankings
-                WHERE user_id = %s AND date = %s
-                """
-                today_stats = db.execute_query(query_today, (user_id, date_str), fetch=True)
-                today_minutes = today_stats[0] if today_stats else 0
-                
-                # همچنین از study_sessions هم چک کنیم برای اطمینان
-                query_sessions = """
-                SELECT COALESCE(SUM(minutes), 0) as total_minutes,
-                       COUNT(*) as session_count
+                # دریافت جلسات امروز با جزئیات کامل
+                query_sessions_detail = """
+                SELECT subject, topic, minutes, start_time
                 FROM study_sessions
-                WHERE user_id = %s AND date LIKE %s AND completed = TRUE
+                WHERE user_id = %s AND date = %s AND completed = TRUE
+                ORDER BY start_time
                 """
-                sessions_result = db.execute_query(query_sessions, (user_id, f"%{date_str[-5:]}%"), fetch=True)
                 
-                if sessions_result:
-                    sessions_total, session_count = sessions_result
-                    if today_minutes == 0 and sessions_total > 0:
-                        today_minutes = sessions_total
+                today_sessions = db.execute_query(query_sessions_detail, (user_id, date_str), fetchall=True)
                 
                 # دریافت آمار دیروز
-                yesterday = (datetime.now(IRAN_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
-                query_yesterday = """
-                SELECT total_minutes FROM daily_rankings
-                WHERE user_id = %s AND date = %s
+                query_yesterday_total = """
+                SELECT COALESCE(SUM(minutes), 0)
+                FROM study_sessions
+                WHERE user_id = %s AND date = %s AND completed = TRUE
                 """
-                yesterday_stats = db.execute_query(query_yesterday, (user_id, yesterday), fetch=True)
-                yesterday_minutes = yesterday_stats[0] if yesterday_stats else 0
+                
+                yesterday_total = db.execute_query(query_yesterday_total, (user_id, yesterday_str), fetch=True)
+                yesterday_minutes = yesterday_total[0] if yesterday_total else 0
                 
                 # دریافت رتبه هفتگی
                 weekly_rank, weekly_minutes, gap_minutes = get_user_weekly_rank(user_id)
                 
-                # دریافت جلسات امروز با جزئیات کامل (مبحث + زمان)
-                query_sessions_detail = """
-                SELECT subject, topic, minutes, TO_TIMESTAMP(start_time) as start_time
-                FROM study_sessions
-                WHERE user_id = %s AND date LIKE %s AND completed = TRUE
-                ORDER BY start_time
-                """
-                sessions_detail = db.execute_query(query_sessions_detail, (user_id, f"%{date_str[-5:]}%"), fetchall=True)
-                
                 # ساخت گزارش
                 text = f"🌙 <b>گزارش پایان روز شما</b>\n\n"
-                text += f"📅 <b>تاریخ:</b> {date_str.replace('-', '/')}\n"
+                text += f"📅 <b>تاریخ:</b> {date_str}\n"
                 text += f"🕒 <b>زمان:</b> {time_str}\n\n"
                 
-                if sessions_detail:
+                if today_sessions:
                     text += f"✅ <b>جلسات امروز (به تفکیک مبحث):</b>\n"
                     
                     subjects = {}
+                    total_today = 0
                     
-                    for session in sessions_detail:
+                    for session in today_sessions:
                         subject, topic, minutes, start_time = session
+                        total_today += minutes
                         
-                        # فرمت زمان شروع
-                        if isinstance(start_time, datetime):
-                            start_time_str = start_time.strftime("%H:%M")
+                        # زمان شروع جلسه
+                        if start_time:
+                            dt = datetime.fromtimestamp(start_time, IRAN_TZ)
+                            start_time_str = dt.strftime("%H:%M")
                         else:
                             start_time_str = "??:??"
                         
-                        # کوتاه کردن مبحث اگر طولانی باشه (حداکثر 40 کاراکتر)
-                        if topic and topic.strip():
-                            topic_display = topic.strip()
-                            if len(topic_display) > 40:
-                                topic_display = topic_display[:40] + "..."
-                        else:
-                            topic_display = "بدون مبحث"
+                        # کوتاه کردن مبحث
+                        topic_display = topic if topic and topic.strip() else "بدون مبحث"
+                        if len(topic_display) > 40:
+                            topic_display = topic_display[:40] + "..."
                         
                         text += f"• {start_time_str} | <b>{subject}</b> - {topic_display} | {minutes} دقیقه\n"
                         
                         # جمع‌زنی برای خلاصه دروس
-                        if subject in subjects:
-                            subjects[subject] += minutes
-                        else:
-                            subjects[subject] = minutes
+                        subjects[subject] = subjects.get(subject, 0) + minutes
                     
                     # نمایش خلاصه دروس
                     if len(subjects) > 1:
@@ -4675,27 +4715,33 @@ async def send_night_report(context: ContextTypes.DEFAULT_TYPE) -> None:
                             text += f"• {subject}: {total} دقیقه\n"
                     
                     text += f"\n📈 <b>آمار کامل امروز:</b>\n"
-                    text += f"⏰ مجموع مطالعه: {today_minutes} دقیقه\n"
-                    text += f"📖 تعداد جلسات: {len(sessions_detail)}\n"
+                    text += f"⏰ مجموع مطالعه: {total_today} دقیقه ({total_today//60} ساعت و {total_today%60} دقیقه)\n"
+                    text += f"📖 تعداد جلسات: {len(today_sessions)}\n"
                     
                     # مقایسه با دیروز
                     if yesterday_minutes > 0:
-                        difference = today_minutes - yesterday_minutes
+                        difference = total_today - yesterday_minutes
                         if difference > 0:
-                            text += f"📈 نسبت به دیروز: <b>+{difference}</b> دقیقه بهبود 🎉\n"
+                            text += f"📈 نسبت به دیروز ({yesterday_str}): <b>+{difference}</b> دقیقه بهبود 🎉\n"
                         elif difference < 0:
-                            text += f"📉 نسبت به دیروز: <b>{abs(difference)}</b> دقیقه کاهش 😔\n"
+                            text += f"📉 نسبت به دیروز ({yesterday_str}): <b>{abs(difference)}</b> دقیقه کاهش 😔\n"
                         else:
-                            text += f"📊 نسبت به دیروز: بدون تغییر\n"
+                            text += f"📊 نسبت به دیروز ({yesterday_str}): بدون تغییر\n"
                     else:
                         text += f"🎯 اولین روز مطالعه! آفرین! 🎉\n"
                     
                     # دریافت رتبه امروز
                     query_rank_today = """
-                    SELECT COUNT(*) + 1 FROM daily_rankings
-                    WHERE date = %s AND total_minutes > %s
+                    SELECT COUNT(*) + 1 
+                    FROM daily_rankings dr
+                    JOIN users u ON dr.user_id = u.user_id
+                    WHERE dr.date = %s AND dr.total_minutes > %s AND u.is_active = TRUE
                     """
-                    rank_today = db.execute_query(query_rank_today, (date_str, today_minutes), fetch=True)
+                    
+                    # تبدیل تاریخ شمسی به میلادی برای جستجو در daily_rankings
+                    today_gregorian = now_iran.strftime("%Y-%m-%d")
+                    
+                    rank_today = db.execute_query(query_rank_today, (today_gregorian, total_today), fetch=True)
                     if rank_today and rank_today[0]:
                         text += f"🏅 رتبه امروز: {rank_today[0]}\n"
                 
@@ -4703,12 +4749,23 @@ async def send_night_report(context: ContextTypes.DEFAULT_TYPE) -> None:
                     text += f"📭 <b>امروز هیچ مطالعه‌ای ثبت نکردید.</b>\n\n"
                     text += f"😔 نگران نباش! فردا یک روز جدید است!\n"
                     text += f"💪 می‌تونی فردا با یک جلسه ۳۰ دقیقه‌ای شروع کنی.\n\n"
+                    total_today = 0
                 
                 # اطلاعات هفتگی
                 if weekly_rank:
                     text += f"\n📅 <b>آمار هفتگی:</b>\n"
                     text += f"🎯 رتبه هفتگی: {weekly_rank}\n"
-                    text += f"⏰ مطالعه هفتگی: {weekly_minutes} دقیقه\n"
+                    
+                    weekly_hours = weekly_minutes // 60
+                    weekly_mins = weekly_minutes % 60
+                    if weekly_hours > 0 and weekly_mins > 0:
+                        weekly_display = f"{weekly_hours} ساعت و {weekly_mins} دقیقه"
+                    elif weekly_hours > 0:
+                        weekly_display = f"{weekly_hours} ساعت"
+                    else:
+                        weekly_display = f"{weekly_mins} دقیقه"
+                    
+                    text += f"⏰ مطالعه هفتگی: {weekly_display}\n"
                     
                     if gap_minutes > 0 and weekly_rank > 5:
                         text += f"🎯 <b>{gap_minutes}</b> دقیقه تا ۵ نفر اول فاصله دارید\n"
@@ -4717,31 +4774,41 @@ async def send_night_report(context: ContextTypes.DEFAULT_TYPE) -> None:
                 
                 # پیشنهاد هدف فردا
                 text += f"\n💡 <b>هدف پیشنهادی برای فردا:</b>\n"
-                if today_minutes > 0:
-                    target = today_minutes + 30  # 30 دقیقه بیشتر از امروز
-                    text += f"🎯 <b>{target}</b> دقیقه مطالعه (۳۰ دقیقه بیشتر از امروز)\n"
+                if total_today > 0:
+                    target = total_today + 30
+                    target_hours = target // 60
+                    target_mins = target % 60
+                    if target_hours > 0 and target_mins > 0:
+                        target_display = f"{target_hours} ساعت و {target_mins} دقیقه"
+                    elif target_hours > 0:
+                        target_display = f"{target_hours} ساعت"
+                    else:
+                        target_display = f{target_mins} دقیقه"
+                    
+                    text += f"🎯 <b>{target_display}</b> (۳۰ دقیقه بیشتر از امروز)\n"
                     
                     # پیشنهاد درس خاص بر اساس بیشترین مطالعه امروز
-                    if sessions_detail:
-                        # پیدا کردن درس با بیشترین مطالعه
+                    if today_sessions and subjects:
                         most_studied = max(subjects.items(), key=lambda x: x[1])
                         text += f"📚 ادامه دادن <b>{most_studied[0]}</b> می‌تونه عالی باشه!\n"
                 else:
-                    text += f"🎯 حداقل <b>۶۰</b> دقیقه مطالعه\n"
+                    text += f"🎯 حداقل <b>۶۰ دقیقه</b> مطالعه\n"
                     text += f"📚 با یک درس مورد علاقه شروع کن!\n"
                 
                 # اضافه کردن نقل قول انگیزشی
                 import random
-                quotes = [
+                night_quotes = [
                     "✨ هر دقیقه‌ای که می‌خونی، به هدفت نزدیک‌تر می‌شی!",
                     "🌟 فردا روز بهتری می‌سازیم!",
                     "💪 تو می‌تونی! فقط کافیه شروع کنی.",
                     "🎯 موفقیت یعنی تکرار کارهای کوچک هر روز.",
                     "📚 مطالعه امروز، سرمایه فرداست.",
-                    "⭐ فردا فرصت جدیدیه برای درخشیدن!"
+                    "⭐ فردا فرصت جدیدیه برای درخشیدن!",
+                    "🌙 شب بخیر و فردایی پر از موفقیت!",
+                    "📖 کتاب‌هایی که امروز خوندی، فردا تو رو می‌سازن!"
                 ]
-                text += f"\n<i>{random.choice(quotes)}</i>\n"
                 
+                text += f"\n\n<i>{random.choice(night_quotes)}</i>\n"
                 text += f"\n🌙 شب بخیر و فردایی پرانرژی! ✨"
                 
                 # ارسال گزارش
@@ -4755,10 +4822,9 @@ async def send_night_report(context: ContextTypes.DEFAULT_TYPE) -> None:
                 mark_report_sent(user_id, "night")
                 total_sent += 1
                 
-                # لاگ برای دیباگ
-                logger.info(f"✅ گزارش شبانه برای کاربر {user_id} ارسال شد - {len(sessions_detail) if sessions_detail else 0} جلسه")
+                logger.info(f"✅ گزارش شبانه برای کاربر {user_id} ارسال شد - {len(today_sessions) if today_sessions else 0} جلسه")
                 
-                await asyncio.sleep(0.1)  # تأخیر برای جلوگیری از محدودیت
+                await asyncio.sleep(0.1)
                 
             except Exception as e:
                 logger.error(f"خطا در ارسال گزارش شبانه به کاربر {user_id}: {e}")
