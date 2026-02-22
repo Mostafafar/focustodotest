@@ -4318,7 +4318,7 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.info(f"   ۲۴ ساعت قبل: {yesterday_iran.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"   بازه تایم‌استمپ: {yesterday_timestamp} تا {now_timestamp}")
         
-        # کوئری با timestamp (همه جلسات بر اساس timestamp ذخیره شده)
+        # دریافت جلسات ۲۴ ساعت گذشته
         query = """
         SELECT 
             session_id,
@@ -4345,10 +4345,154 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 dt = datetime.fromtimestamp(r[4], IRAN_TZ)
                 logger.info(f"     → {r[1]} | {r[3]}د | {dt.strftime('%Y-%m-%d %H:%M:%S')}")
             
-            # ادامه کد نمایش گزارش...
+            # محاسبه آمار
+            total_minutes = sum(r[3] for r in results)
+            total_sessions = len(results)
+            
+            # گروه‌بندی بر اساس درس
+            subjects_summary = {}
+            sessions_by_hour = {}
+            
+            for r in results:
+                session_id, subject, topic, minutes, start_time, date = r
+                
+                # خلاصه دروس
+                subjects_summary[subject] = subjects_summary.get(subject, 0) + minutes
+                
+                # گروه‌بندی ساعتی
+                dt = datetime.fromtimestamp(start_time, IRAN_TZ)
+                hour_key = dt.strftime("%H:00")
+                sessions_by_hour[hour_key] = sessions_by_hour.get(hour_key, 0) + 1
+            
+            # ساخت گزارش
+            text = f"📊 <b>گزارش ۲۴ ساعت گذشته</b>\n\n"
+            text += f"⏰ بازه: {yesterday_iran.strftime('%H:%M')} - {now_iran.strftime('%H:%M')}\n"
+            text += f"📅 تاریخ: {now_iran.strftime('%Y/%m/%d')}\n\n"
+            
+            # آمار کلی
+            text += f"📈 <b>آمار کلی:</b>\n"
+            text += f"• مجموع مطالعه: <b>{total_minutes}</b> دقیقه ({total_minutes//60} ساعت و {total_minutes%60} دقیقه)\n"
+            text += f"• تعداد جلسات: <b>{total_sessions}</b> جلسه\n"
+            avg_minutes = total_minutes // total_sessions if total_sessions > 0 else 0
+            text += f"• میانگین هر جلسه: <b>{avg_minutes}</b> دقیقه\n\n"
+            
+            # خلاصه دروس
+            if subjects_summary:
+                text += f"📚 <b>خلاصه دروس:</b>\n"
+                sorted_subjects = sorted(subjects_summary.items(), key=lambda x: x[1], reverse=True)
+                for subject, minutes in sorted_subjects:
+                    percentage = (minutes / total_minutes) * 100 if total_minutes > 0 else 0
+                    bar_length = int(percentage / 5)  # 20 کاراکتر برای 100%
+                    bar = "█" * bar_length + "░" * (20 - bar_length)
+                    text += f"• {subject}: <b>{minutes}</b> دقیقه ({percentage:.1f}%)\n"
+                    text += f"  {bar}\n"
+                text += "\n"
+            
+            # جزئیات جلسات
+            text += f"📋 <b>جزئیات جلسات (از جدید به قدیم):</b>\n\n"
+            
+            for i, r in enumerate(results[:10], 1):
+                session_id, subject, topic, minutes, start_time, date = r
+                
+                dt = datetime.fromtimestamp(start_time, IRAN_TZ)
+                time_str = dt.strftime("%H:%M")
+                date_str = dt.strftime("%Y/%m/%d")
+                
+                topic_display = topic if topic and topic.strip() else "بدون مبحث"
+                if len(topic_display) > 35:
+                    topic_display = topic_display[:35] + "..."
+                
+                text += f"{i}. <b>{date_str} {time_str}</b>\n"
+                text += f"   📚 {subject} - {topic_display}\n"
+                text += f"   ⏱ {minutes} دقیقه\n\n"
+            
+            if len(results) > 10:
+                text += f"📌 و {len(results) - 10} جلسه دیگر...\n\n"
+            
+            # توزیع ساعتی
+            if sessions_by_hour:
+                text += f"⏰ <b>توزیع ساعتی مطالعه:</b>\n"
+                sorted_hours = sorted(sessions_by_hour.items())
+                for hour, count in sorted_hours:
+                    bar_length = count * 2  # هر جلسه ۲ کاراکتر
+                    bar = "█" * bar_length
+                    text += f"• {hour}: {bar} {count} جلسه\n"
+                text += "\n"
+            
+            # رکوردها
+            if results:
+                max_session = max(results, key=lambda x: x[3])
+                text += f"🏆 <b>رکوردها:</b>\n"
+                text += f"• طولانی‌ترین جلسه: <b>{max_session[3]}</b> دقیقه ({max_session[1]})\n"
+            
+            # مقایسه با دیروز
+            two_days_ago = now_iran - timedelta(hours=48)
+            two_days_ago_timestamp = int(two_days_ago.timestamp())
+            
+            query_yesterday = """
+            SELECT COALESCE(SUM(minutes), 0)
+            FROM study_sessions
+            WHERE 
+                user_id = %s 
+                AND completed = TRUE
+                AND start_time >= %s
+                AND start_time < %s
+            """
+            
+            yesterday_total = db.execute_query(
+                query_yesterday,
+                (user_id, two_days_ago_timestamp, yesterday_timestamp),
+                fetch=True
+            )
+            yesterday_total = yesterday_total[0] if yesterday_total else 0
+            
+            if yesterday_total > 0:
+                diff = total_minutes - yesterday_total
+                if diff > 0:
+                    text += f"📈 نسبت به دیروز (همین بازه): <b>+{diff}</b> دقیقه 🎉\n"
+                elif diff < 0:
+                    text += f"📉 نسبت به دیروز (همین بازه): <b>{diff}</b> دقیقه 😔\n"
+                else:
+                    text += f"📊 نسبت به دیروز (همین بازه): بدون تغییر\n"
+            
+            # نقل قول انگیزشی
+            import random
+            
+            if total_minutes >= 300:
+                quotes = [
+                    "🔥 عالی بود! این یعنی پیشرفت فوق‌العاده!",
+                    "🌟 تو یک ستاره‌ای! ادامه بده!",
+                    "💪 این حجم مطالعه یعنی اراده پولادین!"
+                ]
+            elif total_minutes >= 180:
+                quotes = [
+                    "👍 خیلی خوب بود! فردا بهتر می‌شه!",
+                    "📚 مسیر درست رو داری می‌ری!",
+                    "✨ با همین روند ادامه بده!"
+                ]
+            elif total_minutes >= 60:
+                quotes = [
+                    "🔄 خوب بود، ولی می‌تونی بهتر بشی!",
+                    "🎯 فردا بیشتر تلاش کن!",
+                    "💡 شروع خوبی داشتی!"
+                ]
+            else:
+                quotes = [
+                    "🌱 از یه جا باید شروع کرد! فردا بیشتر!",
+                    "⏰ فردا روز بهتری می‌سازیم!",
+                    "💪 فردا رو قول بده بیشتر بخونی!"
+                ]
+            
+            text += f"\n<i>{random.choice(quotes)}</i>"
+            
+            await update.message.reply_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_main_menu_keyboard()
+            )
             
         else:
-            # نمایش آخرین جلسات
+            # اگر جلسه‌ای پیدا نشد
             query_last = """
             SELECT 
                 session_id,
@@ -4378,8 +4522,12 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     dt = datetime.fromtimestamp(session[4], IRAN_TZ)
                     hours_ago = (now_iran - dt).total_seconds() / 3600
                     
-                    text += f"\n• {session[1]} - {session[2] or 'بدون مبحث'}"
-                    text += f"\n  {session[3]} دقیقه | {dt.strftime('%Y/%m/%d %H:%M')} ({hours_ago:.1f} ساعت پیش)"
+                    topic_display = session[2] if session[2] and session[2].strip() else "بدون مبحث"
+                    if len(topic_display) > 30:
+                        topic_display = topic_display[:30] + "..."
+                    
+                    text += f"\n• {session[1]} - {topic_display}"
+                    text += f"\n  {session[3]} دقیقه | {dt.strftime('%Y/%m/%d %H:%M')} ({hours_ago:.1f} ساعت پیش)\n"
             
             text += "\n\n🔥 برای شروع یک جلسه جدید از منوی اصلی استفاده کن!"
             
@@ -4389,175 +4537,15 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 reply_markup=get_main_menu_keyboard()
             )
         
-    
-                
-        
-        # ادامه کد برای نمایش گزارش...
-        
-    
-        
-        # مرتب‌سازی نهایی
-        
-        
-        
-
-        
-        # محاسبه آمار کلی
-        total_minutes = sum(session[3] for session in sessions)
-        total_sessions = len(sessions)
-        
-        # گروه‌بندی بر اساس درس
-        subjects_summary = {}
-        sessions_by_hour = {}
-        
-        for session in sessions:
-            session_id, subject, topic, minutes, start_time, date = session
-            
-            # خلاصه دروس
-            subjects_summary[subject] = subjects_summary.get(subject, 0) + minutes
-            
-            # گروه‌بندی ساعتی
-            if start_time:
-                dt = datetime.fromtimestamp(start_time, IRAN_TZ)
-                hour_key = dt.strftime("%H:00")
-                sessions_by_hour[hour_key] = sessions_by_hour.get(hour_key, 0) + 1
-        
-        # ساخت گزارش
-        text = f"📊 <b>گزارش ۲۴ ساعت گذشته</b>\n\n"
-        text += f"⏰ بازه: {yesterday.strftime('%H:%M')} - {now.strftime('%H:%M')}\n"
-        text += f"📅 تاریخ: {now_jalali}\n\n"
-        
-        # آمار کلی
-        text += f"📈 <b>آمار کلی:</b>\n"
-        text += f"• مجموع مطالعه: <b>{total_minutes}</b> دقیقه ({total_minutes//60} ساعت و {total_minutes%60} دقیقه)\n"
-        text += f"• تعداد جلسات: <b>{total_sessions}</b> جلسه\n"
-        avg_minutes = total_minutes // total_sessions if total_sessions > 0 else 0
-        text += f"• میانگین هر جلسه: <b>{avg_minutes}</b> دقیقه\n\n"
-        
-        # خلاصه دروس
-        if subjects_summary:
-            text += f"📚 <b>خلاصه دروس:</b>\n"
-            sorted_subjects = sorted(subjects_summary.items(), key=lambda x: x[1], reverse=True)
-            for subject, minutes in sorted_subjects:
-                percentage = (minutes / total_minutes) * 100 if total_minutes > 0 else 0
-                text += f"• {subject}: <b>{minutes}</b> دقیقه ({percentage:.1f}%)\n"
-            text += "\n"
-        
-        # جزئیات جلسات
-        text += f"📋 <b>جزئیات جلسات (از جدید به قدیم):</b>\n\n"
-        
-        for i, session in enumerate(sessions[:10], 1):
-            session_id, subject, topic, minutes, start_time, date = session
-            
-            # فرمت زمان
-            if start_time:
-                dt = datetime.fromtimestamp(start_time, IRAN_TZ)
-                time_str = dt.strftime("%H:%M")
-                date_str = dt.strftime("%Y/%m/%d")
-            else:
-                time_str = "??:??"
-                date_str = date if date else "نامشخص"
-            
-            # کوتاه کردن مبحث
-            topic_display = topic if topic and topic.strip() else "بدون مبحث"
-            if len(topic_display) > 35:
-                topic_display = topic_display[:35] + "..."
-            
-            text += f"{i}. <b>{date_str} {time_str}</b>\n"
-            text += f"   📚 {subject} - {topic_display}\n"
-            text += f"   ⏱ {minutes} دقیقه\n\n"
-        
-        if len(sessions) > 10:
-            text += f"📌 و {len(sessions) - 10} جلسه دیگر...\n\n"
-        
-        # توزیع ساعتی
-        if sessions_by_hour:
-            text += f"⏰ <b>توزیع ساعتی مطالعه:</b>\n"
-            sorted_hours = sorted(sessions_by_hour.items())
-            for hour, count in sorted_hours:
-                text += f"• {hour}: {count} جلسه\n"
-            text += "\n"
-        
-        # رکوردها
-        if sessions:
-            max_session = max(sessions, key=lambda x: x[3])
-            text += f"🏆 <b>رکوردها:</b>\n"
-            text += f"• طولانی‌ترین جلسه: <b>{max_session[3]}</b> دقیقه ({max_session[1]})\n"
-        
-        # مقایسه با دیروز
-        two_days_ago = now - timedelta(hours=48)
-        two_days_ago_timestamp = int(two_days_ago.timestamp())
-        
-        query_yesterday = """
-        SELECT COALESCE(SUM(minutes), 0)
-        FROM study_sessions
-        WHERE 
-            user_id = %s 
-            AND completed = TRUE
-            AND start_time >= %s
-            AND start_time < %s
-        """
-        
-        yesterday_total = db.execute_query(
-            query_yesterday,
-            (user_id, two_days_ago_timestamp, yesterday_timestamp),
-            fetch=True
-        )
-        yesterday_total = yesterday_total[0] if yesterday_total else 0
-        
-        if yesterday_total > 0:
-            diff = total_minutes - yesterday_total
-            if diff > 0:
-                text += f"📈 نسبت به دیروز (همین بازه): <b>+{diff}</b> دقیقه 🎉\n"
-            elif diff < 0:
-                text += f"📉 نسبت به دیروز (همین بازه): <b>{diff}</b> دقیقه 😔\n"
-            else:
-                text += f"📊 نسبت به دیروز (همین بازه): بدون تغییر\n"
-        
-        # نقل قول انگیزشی
-        import random
-        
-        if total_minutes >= 300:
-            quotes = [
-                "🔥 عالی بود! این یعنی پیشرفت فوق‌العاده!",
-                "🌟 تو یک ستاره‌ای! ادامه بده!",
-                "💪 این حجم مطالعه یعنی اراده پولادین!"
-            ]
-        elif total_minutes >= 180:
-            quotes = [
-                "👍 خیلی خوب بود! فردا بهتر می‌شه!",
-                "📚 مسیر درست رو داری می‌ری!",
-                "✨ با همین روند ادامه بده!"
-            ]
-        elif total_minutes >= 60:
-            quotes = [
-                "🔄 خوب بود، ولی می‌تونی بهتر بشی!",
-                "🎯 فردا بیشتر تلاش کن!",
-                "💡 شروع خوبی داشتی!"
-            ]
-        else:
-            quotes = [
-                "🌱 از یه جا باید شروع کرد! فردا بیشتر!",
-                "⏰ فردا روز بهتری می‌سازیم!",
-                "💪 فردا رو قول بده بیشتر بخونی!"
-            ]
-        
-        text += f"\n<i>{random.choice(quotes)}</i>"
-        
-        await update.message.reply_text(
-            text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_main_menu_keyboard()
-        )
-        
-        logger.info(f"✅ گزارش ۲۴ ساعت برای کاربر {user_id} ارسال شد - {total_sessions} جلسه")
+        logger.info(f"✅ گزارش برای کاربر {user_id} ارسال شد - {len(results) if results else 0} جلسه")
         
     except Exception as e:
         logger.error(f"❌ خطا در گزارش ۲۴ ساعت برای کاربر {user_id}: {e}", exc_info=True)
         await update.message.reply_text(
             "❌ خطا در دریافت گزارش. لطفا مجدد تلاش کنید.",
             reply_markup=get_main_menu_keyboard()
-                    )
+                )
+    
 async def send_night_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     """ارسال گزارش شبانه ساعت 23:00 - نمایش مبحث و جزئیات کامل"""
     try:
