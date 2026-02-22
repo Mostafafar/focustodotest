@@ -4298,6 +4298,7 @@ async def send_midday_report(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 
+
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """دستور /report - نمایش گزارش مطالعه ۲۴ ساعت گذشته"""
     user_id = update.effective_user.id
@@ -4309,6 +4310,10 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         now_iran = datetime.now(IRAN_TZ)
         yesterday_iran = now_iran - timedelta(hours=24)
+        
+        # تبدیل به تاریخ شمسی
+        now_jdate = jdatetime.datetime.fromgregorian(datetime=now_iran)
+        now_jalali = now_jdate.strftime("%Y/%m/%d")
         
         now_timestamp = int(now_iran.timestamp())
         yesterday_timestamp = int(yesterday_iran.timestamp())
@@ -4364,10 +4369,10 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 hour_key = dt.strftime("%H:00")
                 sessions_by_hour[hour_key] = sessions_by_hour.get(hour_key, 0) + 1
             
-            # ساخت گزارش
+            # ساخت گزارش با تاریخ شمسی
             text = f"📊 <b>گزارش ۲۴ ساعت گذشته</b>\n\n"
             text += f"⏰ بازه: {yesterday_iran.strftime('%H:%M')} - {now_iran.strftime('%H:%M')}\n"
-            text += f"📅 تاریخ: {now_iran.strftime('%Y/%m/%d')}\n\n"
+            text += f"📅 تاریخ: {now_jalali}\n\n"
             
             # آمار کلی
             text += f"📈 <b>آمار کلی:</b>\n"
@@ -4382,7 +4387,7 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 sorted_subjects = sorted(subjects_summary.items(), key=lambda x: x[1], reverse=True)
                 for subject, minutes in sorted_subjects:
                     percentage = (minutes / total_minutes) * 100 if total_minutes > 0 else 0
-                    bar_length = int(percentage / 5)  # 20 کاراکتر برای 100%
+                    bar_length = int(percentage / 5)
                     bar = "█" * bar_length + "░" * (20 - bar_length)
                     text += f"• {subject}: <b>{minutes}</b> دقیقه ({percentage:.1f}%)\n"
                     text += f"  {bar}\n"
@@ -4396,7 +4401,10 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 
                 dt = datetime.fromtimestamp(start_time, IRAN_TZ)
                 time_str = dt.strftime("%H:%M")
-                date_str = dt.strftime("%Y/%m/%d")
+                
+                # تبدیل تاریخ هر جلسه به شمسی
+                session_jdate = jdatetime.datetime.fromgregorian(datetime=dt)
+                date_str = session_jdate.strftime("%Y/%m/%d")
                 
                 topic_display = topic if topic and topic.strip() else "بدون مبحث"
                 if len(topic_display) > 35:
@@ -4414,7 +4422,7 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 text += f"⏰ <b>توزیع ساعتی مطالعه:</b>\n"
                 sorted_hours = sorted(sessions_by_hour.items())
                 for hour, count in sorted_hours:
-                    bar_length = count * 2  # هر جلسه ۲ کاراکتر
+                    bar_length = count * 2
                     bar = "█" * bar_length
                     text += f"• {hour}: {bar} {count} جلسه\n"
                 text += "\n"
@@ -4492,7 +4500,7 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             
         else:
-            # اگر جلسه‌ای پیدا نشد
+            # اگر جلسه‌ای پیدا نشد - با تاریخ شمسی
             query_last = """
             SELECT 
                 session_id,
@@ -4512,7 +4520,7 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             text = f"""📭 <b>گزارش ۲۴ ساعت گذشته</b>
 
 ⏰ بازه: {yesterday_iran.strftime('%H:%M')} - {now_iran.strftime('%H:%M')}
-📅 تاریخ: {now_iran.strftime('%Y/%m/%d')}
+📅 تاریخ: {now_jalali}
 
 ❌ <b>هیچ جلسه‌ای در ۲۴ ساعت گذشته ثبت نشده!</b>"""
 
@@ -4522,12 +4530,16 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     dt = datetime.fromtimestamp(session[4], IRAN_TZ)
                     hours_ago = (now_iran - dt).total_seconds() / 3600
                     
+                    # تبدیل تاریخ به شمسی
+                    session_jdate = jdatetime.datetime.fromgregorian(datetime=dt)
+                    date_str = session_jdate.strftime("%Y/%m/%d")
+                    
                     topic_display = session[2] if session[2] and session[2].strip() else "بدون مبحث"
                     if len(topic_display) > 30:
                         topic_display = topic_display[:30] + "..."
                     
                     text += f"\n• {session[1]} - {topic_display}"
-                    text += f"\n  {session[3]} دقیقه | {dt.strftime('%Y/%m/%d %H:%M')} ({hours_ago:.1f} ساعت پیش)\n"
+                    text += f"\n  {session[3]} دقیقه | {date_str} {dt.strftime('%H:%M')} ({hours_ago:.1f} ساعت پیش)\n"
             
             text += "\n\n🔥 برای شروع یک جلسه جدید از منوی اصلی استفاده کن!"
             
@@ -4544,7 +4556,9 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             "❌ خطا در دریافت گزارش. لطفا مجدد تلاش کنید.",
             reply_markup=get_main_menu_keyboard()
-                )
+            )            
+            
+
     
 async def send_night_report(context: ContextTypes.DEFAULT_TYPE) -> None:
     """ارسال گزارش شبانه ساعت 23:00 - نمایش مبحث و جزئیات کامل"""
