@@ -1435,28 +1435,6 @@ async def check_my_stats_command(update: Update, context: ContextTypes.DEFAULT_T
         logger.error(f"خطا در بررسی آمار: {e}")
         await update.message.reply_text(f"❌ خطا: {e}")
 
-def mark_encouragement_sent(user_id: int) -> bool:
-    """علامت‌گذاری ارسال پیام تشویقی"""
-    try:
-        now = datetime.now(IRAN_TZ)
-        date_str = now.strftime("%Y-%m-%d")  # تاریخ امروز
-        time_str = now.strftime("%H:%M:%S")  # زمان دقیق
-        
-        # 🔴 اضافه کردن created_at با زمان دقیق
-        query = """
-        INSERT INTO user_activities (user_id, date, received_encouragement, created_at)
-        VALUES (%s, %s, TRUE, %s)
-        ON CONFLICT (user_id, date) DO UPDATE SET
-            received_encouragement = TRUE,
-            created_at = EXCLUDED.created_at
-        """
-        
-        db.execute_query(query, (user_id, date_str, now))
-        return True
-        
-    except Exception as e:
-        logger.error(f"خطا در علامت‌گذاری پیام تشویقی: {e}")
-        return False
 
 def mark_report_sent(user_id: int, report_type: str) -> bool:
     """علامت‌گذاری ارسال گزارش (midday/night)"""
@@ -8493,19 +8471,12 @@ def main() -> None:
     )
     
     # Job برای پیام‌های تشویقی رندوم (هر روز ساعت 14:00)
+    # ارسال پیشنهاد به کاربران بدون مطالعه (هر ۴ روز یکبار در ساعت ۱۲ ظهر)
     application.job_queue.run_daily(
-        send_random_encouragement,
-        time=dt_time(hour=1, minute=0, second=0, tzinfo=IRAN_TZ),  # 14:00
+        send_random_offer_to_inactive,
+        time=dt_time(hour=12, minute=0, second=0, tzinfo=IRAN_TZ),
         days=(0, 1, 2, 3, 4, 5, 6),
-        name="random_encouragement"
-    )
-    
-    # همچنین یک Job تکرارشونده برای ارسال رندوم در طول روز
-    application.job_queue.run_repeating(
-        send_random_encouragement,
-        interval=21600,  # هر 6 ساعت
-        first=10,
-        name="periodic_encouragement"
+        name="inactive_users_offer"
     )
     
     # Job برای بررسی اتاق‌های تمام‌شده (هر ۵ دقیقه)
