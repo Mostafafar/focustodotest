@@ -3414,7 +3414,7 @@ async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             reply_markup=get_competition_keyboard()
 )
 def create_competition_room(creator_id: int, end_time: str, password: str) -> Optional[str]:
-    """ایجاد اتاق رقابت جدید با زمان ایران"""
+    """ایجاد اتاق رقابت جدید با تاریخ شمسی"""
     conn = None
     cursor = None
     
@@ -3428,28 +3428,29 @@ def create_competition_room(creator_id: int, end_time: str, password: str) -> Op
         # دریافت تاریخ و زمان ایران
         now_iran = datetime.now(IRAN_TZ)
         
-        # ذخیره در دیتابیس به صورت UTC
+        # ========== اضافه کردن تاریخ شمسی ==========
+        jdate = jdatetime.datetime.fromgregorian(datetime=now_iran)
+        jalali_date = jdate.strftime("%Y/%m/%d")
+        # ==========================================
+        
         now_utc = now_iran.astimezone(pytz.UTC)
         
-        logger.info(f"📅 زمان ایران: {now_iran.strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"📅 زمان UTC: {now_utc.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # ایجاد اتاق
+        # ========== تغییر کوئری ==========
         query = """
-        INSERT INTO competition_rooms (room_code, creator_id, password, end_time, status, created_at)
-        VALUES (%s, %s, %s, %s, 'waiting', %s)
+        INSERT INTO competition_rooms (room_code, creator_id, password, end_time, jalali_date, status, created_at)
+        VALUES (%s, %s, %s, %s, %s, 'waiting', %s)
         RETURNING room_code
         """
         
-        cursor.execute(query, (room_code, creator_id, password, end_time, now_utc))
+        cursor.execute(query, (room_code, creator_id, password, end_time, jalali_date, now_utc))
+        # ================================
+        
         result = cursor.fetchone()
         
         if not result:
-            logger.error("❌ هیچ نتیجه‌ای از INSERT اتاق برگشت داده نشد")
             conn.rollback()
             return None
         
-        # اضافه کردن سازنده به اتاق
         query2 = """
         INSERT INTO room_participants (room_code, user_id, joined_at)
         VALUES (%s, %s, %s)
@@ -3458,7 +3459,6 @@ def create_competition_room(creator_id: int, end_time: str, password: str) -> Op
         cursor.execute(query2, (room_code, creator_id, now_utc))
         conn.commit()
         
-        logger.info(f"✅ اتاق {room_code} با موفقیت ایجاد شد")
         return room_code
         
     except Exception as e:
@@ -3527,26 +3527,27 @@ def join_competition_room(room_code: str, user_id: int, password: str) -> bool:
         return False
 
 def get_room_info(room_code: str) -> Optional[Dict]:
-    """دریافت اطلاعات اتاق با زمان ایران"""
+    """دریافت اطلاعات اتاق با تاریخ شمسی"""
     try:
+        # ========== اضافه کردن jalali_date به SELECT ==========
         query = """
         SELECT cr.room_code, cr.creator_id, cr.end_time, cr.status,
-               cr.created_at, u.username as creator_name,
+               cr.created_at, cr.jalali_date, u.username as creator_name,
                COUNT(rp.user_id) as player_count
         FROM competition_rooms cr
         JOIN users u ON cr.creator_id = u.user_id
         LEFT JOIN room_participants rp ON cr.room_code = rp.room_code
         WHERE cr.room_code = %s
         GROUP BY cr.room_code, cr.creator_id, cr.end_time, cr.status,
-                 cr.created_at, u.username
+                 cr.created_at, cr.jalali_date, u.username
         """
+        # =====================================================
         
         result = db.execute_query(query, (room_code,), fetch=True)
         
         if result:
-            room_code_db, creator_id, end_time, status, created_at, creator_name, player_count = result
+            room_code_db, creator_id, end_time, status, created_at, jalali_date, creator_name, player_count = result
             
-            # تبدیل زمان ایجاد به وقت ایران
             if created_at:
                 if isinstance(created_at, datetime):
                     if created_at.tzinfo is None:
@@ -3555,18 +3556,19 @@ def get_room_info(room_code: str) -> Optional[Dict]:
                     else:
                         created_at_iran = created_at.astimezone(IRAN_TZ)
                     
-                    created_at_str = created_at_iran.strftime("%Y/%m/%d %H:%M")
+                    created_time_str = created_at_iran.strftime("%H:%M")
                 else:
-                    created_at_str = str(created_at)
+                    created_time_str = str(created_at)
             else:
-                created_at_str = "نامشخص"
+                created_time_str = "نامشخص"
             
             return {
                 "room_code": room_code_db,
                 "creator_id": creator_id,
                 "end_time": end_time,
                 "status": status,
-                "created_at": created_at_str,
+                "created_at": created_time_str,
+                "jalali_date": jalali_date or "نامشخص",  # تاریخ شمسی
                 "creator_name": creator_name,
                 "player_count": player_count
             }
