@@ -3699,7 +3699,12 @@ def award_room_winner(room_code: str) -> Optional[Dict]:
 
 
                     
-
+def persian_to_english_numbers(text: str) -> str:
+    """تبدیل اعداد فارسی/عربی به انگلیسی"""
+    persian_numbers = '۰۱۲۳۴۵۶۷۸۹'
+    english_numbers = '0123456789'
+    translation_table = str.maketrans(persian_numbers, english_numbers)
+    return text.translate(translation_table)
 async def check_and_finish_rooms_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """بررسی و اتمام اتاق‌های تمام‌شده (برنامه زمان‌بندی شده)"""
     try:
@@ -3723,12 +3728,17 @@ async def check_and_finish_rooms_job(context: ContextTypes.DEFAULT_TYPE) -> None
             for row in results:
                 room_code, end_time_str = row
                 
+                # ========== اضافه کردن این بخش برای تبدیل اعداد ==========
+                # تبدیل اعداد فارسی به انگلیسی
+                end_time_str_english = persian_to_english_numbers(end_time_str)
+                
                 # تبدیل end_time از رشته به time object
                 try:
-                    end_time_obj = datetime.strptime(end_time_str, "%H:%M").time()
+                    end_time_obj = datetime.strptime(end_time_str_english, "%H:%M").time()
                 except ValueError:
                     logger.error(f"❌ فرمت زمان نامعتبر برای اتاق {room_code}: {end_time_str}")
                     continue
+                # ======================================================
                 
                 logger.info(f"🔍 بررسی اتاق {room_code}: زمان پایان={end_time_str}, زمان جاری={current_time_obj}")
                 
@@ -3736,8 +3746,10 @@ async def check_and_finish_rooms_job(context: ContextTypes.DEFAULT_TYPE) -> None
                 if current_time_obj < end_time_obj:
                     continue
                 
+                # بقیه کد بدون تغییر ادامه پیدا می‌کند...
                 logger.info(f"⏰ زمان اتاق {room_code} به پایان رسیده (پایان: {end_time_str}, جاری: {current_time_obj})")
                 
+                # ... ادامه کد (همان چیزی که قبلاً بود) ...
                 # بررسی تعداد شرکت‌کنندگان
                 query_count = """
                 SELECT COUNT(*) FROM room_participants WHERE room_code = %s
