@@ -3836,8 +3836,9 @@ async def check_and_finish_rooms_job(context: ContextTypes.DEFAULT_TYPE) -> None
         now = datetime.now(IRAN_TZ)
         current_time_obj = now.time()
         current_date_str = now.strftime("%Y-%m-%d")
+        current_time_str = now.strftime("%H:%M")
         
-        logger.info(f"🔍 بررسی اتاق‌های تمام‌شده در ساعت {current_time_obj}")
+        logger.info(f"🔍 بررسی اتاق‌های تمام‌شده در ساعت {current_time_str}")
         
         # دریافت اتاق‌های فعال
         query = """
@@ -3847,132 +3848,108 @@ async def check_and_finish_rooms_job(context: ContextTypes.DEFAULT_TYPE) -> None
         
         results = db.execute_query(query, fetchall=True)
         
-        if results:
-            logger.info(f"🔍 بررسی {len(results)} اتاق فعال...")
+        if not results:
+            logger.info("📭 هیچ اتاق فعالی برای بررسی وجود ندارد")
+            return
+        
+        logger.info(f"🔍 بررسی {len(results)} اتاق فعال...")
+        
+        for row in results:
+            room_code, end_time_str = row
             
-            for row in results:
-                room_code, end_time_str = row
+            # تبدیل اعداد فارسی به انگلیسی
+            end_time_str_english = persian_to_english_numbers(end_time_str)
+            
+            # تبدیل end_time از رشته به time object
+            try:
+                end_time_obj = datetime.strptime(end_time_str_english, "%H:%M").time()
+            except ValueError as e:
+                logger.error(f"❌ فرمت زمان نامعتبر برای اتاق {room_code}: '{end_time_str}' (تبدیل شده: '{end_time_str_english}') - خطا: {e}")
                 
-                # ========== اضافه کردن این بخش برای تبدیل اعداد ==========
-                # تبدیل اعداد فارسی به انگلیسی
-                end_time_str_english = persian_to_english_numbers(end_time_str)
-                
-                # تبدیل end_time از رشته به time object
+                # امتحان با روش دستی
                 try:
-                    end_time_obj = datetime.strptime(end_time_str_english, "%H:%M").time()
-                except ValueError:
-                    logger.error(f"❌ فرمت زمان نامعتبر برای اتاق {room_code}: {end_time_str}")
+                    if ":" in end_time_str_english:
+                        parts = end_time_str_english.split(":")
+                        if len(parts) == 2:
+                            hour = int(parts[0])
+                            minute = int(parts[1])
+                            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                                end_time_obj = datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
+                                logger.info(f"✅ تبدیل دستی موفق: {hour:02d}:{minute:02d}")
+                            else:
+                                logger.error(f"❌ ساعت یا دقیقه نامعتبر: {hour}:{minute}")
+                                continue
+                        else:
+                            continue
+                    else:
+                        continue
+                except Exception as e2:
+                    logger.error(f"❌ تلاش دوم هم ناموفق: {e2}")
                     continue
-                # ======================================================
+            
+            logger.info(f"🔍 بررسی اتاق {room_code}: زمان پایان={end_time_str} ({end_time_str_english}), زمان جاری={current_time_str}")
+            
+            # ========== بررسی آیا زمان به پایان رسیده ==========
+            # اگر زمان هنوز نرسیده، برو به اتاق بعدی
+            if current_time_obj < end_time_obj:
+                logger.info(f"⏳ اتاق {room_code} زمانش نرسیده (فعلاً {current_time_str} < {end_time_str})")
+                continue
+            
+            # ========== اینجا زمان رسیده یا گذشته ==========
+            logger.info(f"⏰ زمان اتاق {room_code} به پایان رسیده یا گذشته! (پایان: {end_time_str}, جاری: {current_time_str})")
+            
+            # دریافت تعداد شرکت‌کنندگان
+            query_count = """
+            SELECT COUNT(*) FROM room_participants WHERE room_code = %s
+            """
+            count_result = db.execute_query(query_count, (room_code,), fetch=True)
+            player_count = count_result[0] if count_result else 0
+            
+            logger.info(f"👥 تعداد شرکت‌کنندگان اتاق {room_code}: {player_count} نفر")
+            
+            # دریافت اطلاعات کامل شرکت‌کنندگان
+            query_participants = """
+            SELECT rp.user_id, rp.total_minutes, u.username, u.first_name
+            FROM room_participants rp
+            JOIN users u ON rp.user_id = u.user_id
+            WHERE rp.room_code = %s
+            ORDER BY rp.total_minutes DESC
+            """
+            participants = db.execute_query(query_participants, (room_code,), fetchall=True)
+            
+            # ========== سناریوی اول: کمتر از ۵ نفر ==========
+            if player_count < 5:
+                logger.info(f"❌ اتاق {room_code} کنسل شد: فقط {player_count} نفر (حداقل نیاز: ۵ نفر)")
                 
-                logger.info(f"🔍 بررسی اتاق {room_code}: زمان پایان={end_time_str}, زمان جاری={current_time_obj}")
-                
-                # اگر زمان هنوز نرسیده، رد کن
-                if current_time_obj < end_time_obj:
-                    continue
-                
-                # بقیه کد بدون تغییر ادامه پیدا می‌کند...
-                logger.info(f"⏰ زمان اتاق {room_code} به پایان رسیده (پایان: {end_time_str}, جاری: {current_time_obj})")
-                
-                # ... ادامه کد (همان چیزی که قبلاً بود) ...
-                # بررسی تعداد شرکت‌کنندگان
-                query_count = """
-                SELECT COUNT(*) FROM room_participants WHERE room_code = %s
+                # تغییر وضعیت به کنسل شده
+                query_cancel = """
+                UPDATE competition_rooms
+                SET status = 'cancelled'
+                WHERE room_code = %s
                 """
-                count_result = db.execute_query(query_count, (room_code,), fetch=True)
-                player_count = count_result[0] if count_result else 0
+                db.execute_query(query_cancel, (room_code,))
+                logger.info(f"✅ وضعیت اتاق {room_code} به 'cancelled' تغییر یافت")
                 
-                # ========== سناریوی اول: کمتر از ۵ نفر ==========
-                if player_count < 5:
-                    logger.info(f"❌ اتاق {room_code} کنسل شد: فقط {player_count} نفر")
-                    
-                    # تغییر وضعیت به کنسل شده
-                    query_cancel = """
-                    UPDATE competition_rooms
-                    SET status = 'cancelled'
-                    WHERE room_code = %s
-                    """
-                    db.execute_query(query_cancel, (room_code,))
-                    
-                    # دریافت همه شرکت‌کنندگان برای اطلاع‌رسانی
-                    query_participants = """
-                    SELECT user_id FROM room_participants WHERE room_code = %s
-                    """
-                    participants = db.execute_query(query_participants, (room_code,), fetchall=True)
-                    
-                    if participants:
-                        for participant in participants:
-                            user_id = participant[0]
-                            try:
-                                await context.bot.send_message(
-                                    user_id,
-                                    f"❌ <b>اتاق رقابت #{room_code} کنسل شد!</b>\n\n"
-                                    f"متاسفانه تعداد شرکت‌کنندگان به حد نصاب ۵ نفر نرسید.\n"
-                                    f"👥 تعداد شرکت‌کنندگان: {player_count} نفر\n\n"
-                                    f"💡 می‌توانید با تعداد بیشتری از دوستان یک اتاق جدید بسازید.",
-                                    parse_mode=ParseMode.HTML,
-                                    reply_markup=get_competition_keyboard()
-                                )
-                                logger.info(f"✅ پیام کنسل شدن به کاربر {user_id} ارسال شد")
-                            except Exception as e:
-                                if "Forbidden: bot was blocked by the user" in str(e):
-                                    logger.warning(f"🚫 کاربر {user_id} ربات رو بلاک کرده")
-                                else:
-                                    logger.error(f"❌ خطا در اطلاع کنسل شدن به کاربر {user_id}: {e}")
-                
-                # ========== سناریوی دوم: ۵ نفر یا بیشتر ==========
-                else:  # player_count >= 5
-                    logger.info(f"✅ اتاق {room_code} پایان یافت: {player_count} نفر")
-                    
-                    # تغییر وضعیت به پایان یافته
-                    query_finish = """
-                    UPDATE competition_rooms
-                    SET status = 'finished'
-                    WHERE room_code = %s
-                    """
-                    db.execute_query(query_finish, (room_code,))
-                    
-                    # دریافت نفر اول
-                    query_winner = """
-                    SELECT rp.user_id, rp.total_minutes, u.username
-                    FROM room_participants rp
-                    JOIN users u ON rp.user_id = u.user_id
-                    WHERE rp.room_code = %s
-                    ORDER BY rp.total_minutes DESC
-                    LIMIT 1
-                    """
-                    winner_result = db.execute_query(query_winner, (room_code,), fetch=True)
-                    
-                    winner_id = None
-                    winner_minutes = 0
-                    winner_username = "نامشخص"
-                    coupon = None
-                    
-                    if winner_result:
-                        winner_id, winner_minutes, winner_username = winner_result
+                if participants:
+                    for participant in participants:
+                        user_id = participant[0]
+                        user_minutes = participant[1]
+                        username = participant[2] or "کاربر"
                         
-                        # ایجاد کوپن برای برنده
-                        coupon = create_coupon(winner_id, "competition_winner")
-                        if coupon:
-                            logger.info(f"🎫 کوپن جایزه برای برنده {winner_id} ایجاد شد: {coupon['coupon_code']}")
-                    
-                    # دریافت همه شرکت‌کنندگان به همراه زمان مطالعه
-                    query_all_participants = """
-                    SELECT rp.user_id, rp.total_minutes, u.username
-                    FROM room_participants rp
-                    JOIN users u ON rp.user_id = u.user_id
-                    WHERE rp.room_code = %s
-                    ORDER BY rp.total_minutes DESC
-                    """
-                    all_participants = db.execute_query(query_all_participants, (room_code,), fetchall=True)
-                    
-                    if all_participants:
-                        # ساخت رتبه‌بندی نهایی
-                        ranking_lines = []
-                        for i, (p_id, p_minutes, p_username) in enumerate(all_participants[:5], 1):
-                            # دریافت نام واقعی از تلگرام (تلاش می‌کنیم)
+                        # فرمت زمان مطالعه کاربر
+                        hours = user_minutes // 60
+                        mins = user_minutes % 60
+                        if hours > 0 and mins > 0:
+                            time_display = f"{hours} ساعت و {mins} دقیقه"
+                        elif hours > 0:
+                            time_display = f"{hours} ساعت"
+                        else:
+                            time_display = f"{mins} دقیقه"
+                        
+                        try:
+                            # دریافت نام کاربر از تلگرام
                             try:
-                                chat_member = await context.bot.get_chat(p_id)
+                                chat_member = await context.bot.get_chat(user_id)
                                 if chat_member.first_name:
                                     display_name = chat_member.first_name
                                     if chat_member.last_name:
@@ -3980,78 +3957,197 @@ async def check_and_finish_rooms_job(context: ContextTypes.DEFAULT_TYPE) -> None
                                 elif chat_member.username:
                                     display_name = f"@{chat_member.username}"
                                 else:
-                                    display_name = p_username or f"کاربر {p_id}"
+                                    display_name = username
                             except:
-                                display_name = p_username or f"کاربر {p_id}"
+                                display_name = username
                             
-                            # ایموجی مدال
-                            medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-                            medal = medals[i-1] if i <= 5 else f"{i}."
-                            
-                            # فرمت زمان
-                            hours = p_minutes // 60
-                            mins = p_minutes % 60
-                            if hours > 0 and mins > 0:
-                                time_display = f"{hours}h {mins}m"
-                            elif hours > 0:
-                                time_display = f"{hours}h"
-                            else:
-                                time_display = f"{mins}m"
-                            
-                            winner_emoji = " 🎉" if p_id == winner_id else ""
-                            ranking_lines.append(f"{medal} {html.escape(display_name)}: {time_display}{winner_emoji}")
-                        
-                        ranking_text = "\n".join(ranking_lines)
-                        
-                        # ارسال به همه شرکت‌کنندگان
-                        for participant in all_participants:
-                            p_id = participant[0]
-                            
-                            # متن پایه برای همه
                             message = (
-                                f"🏁 <b>اتاق رقابت #{room_code} پایان یافت!</b>\n\n"
-                                f"🕒 <b>ساعت پایان:</b> {end_time_str}\n"
-                                f"📅 <b>تاریخ:</b> {current_date_str.replace('-', '/')}\n"
-                                f"👥 <b>تعداد شرکت‌کنندگان:</b> {player_count} نفر\n\n"
-                                f"<b>🏆 رتبه‌بندی نهایی:</b>\n"
-                                f"{ranking_text}\n"
+                                f"❌ <b>اتاق رقابت #{room_code} کنسل شد!</b>\n\n"
+                                f"متاسفانه تعداد شرکت‌کنندگان به حد نصاب ۵ نفر نرسید.\n"
+                                f"👥 تعداد شرکت‌کنندگان: {player_count} نفر\n"
+                                f"📊 حداقل نیاز: ۵ نفر\n\n"
+                                f"<b>📈 آمار شما در این رقابت:</b>\n"
+                                f"⏱ مجموع مطالعه: {time_display}\n\n"
+                                f"💡 می‌توانید با تعداد بیشتری از دوستان یک اتاق جدید بسازید.\n"
+                                f"🏆 از منوی «رقابت گروهی» استفاده کنید."
                             )
                             
-                            # اگر این کاربر برنده است، پیام جایزه اضافه کن
-                            if p_id == winner_id and coupon:
-                                message += (
-                                    f"\n🎉 <b>تبریک! شما برنده شدید!</b>\n"
-                                    f"🎫 <b>کوپن جایزه:</b> <code>{coupon['coupon_code']}</code>\n"
-                                    f"💰 <b>ارزش:</b> ۴۰,۰۰۰ تومان\n"
-                                    f"📅 <b>تاریخ:</b> {coupon['earned_date']}\n\n"
-                                    f"💡 از این کوپن برای خدمات مختلف استفاده کنید!"
-                                )
+                            await context.bot.send_message(
+                                user_id,
+                                message,
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=get_competition_keyboard()
+                            )
+                            logger.info(f"✅ پیام کنسل شدن به کاربر {user_id} ({display_name}) ارسال شد")
+                            
+                        except Exception as e:
+                            if "Forbidden: bot was blocked by the user" in str(e):
+                                logger.warning(f"🚫 کاربر {user_id} ربات رو بلاک کرده")
                             else:
+                                logger.error(f"❌ خطا در اطلاع کنسل شدن به کاربر {user_id}: {e}")
+                        
+                        await asyncio.sleep(0.1)  # تأخیر بین ارسال‌ها
+            
+            # ========== سناریوی دوم: ۵ نفر یا بیشتر ==========
+            else:  # player_count >= 5
+                logger.info(f"✅ اتاق {room_code} پایان یافت: {player_count} نفر (رقابت کامل)")
+                
+                # تغییر وضعیت به پایان یافته
+                query_finish = """
+                UPDATE competition_rooms
+                SET status = 'finished'
+                WHERE room_code = %s
+                """
+                db.execute_query(query_finish, (room_code,))
+                logger.info(f"✅ وضعیت اتاق {room_code} به 'finished' تغییر یافت")
+                
+                # دریافت نفر اول
+                winner_id = None
+                winner_minutes = 0
+                winner_username = "نامشخص"
+                coupon = None
+                
+                if participants and len(participants) > 0:
+                    winner_id = participants[0][0]
+                    winner_minutes = participants[0][1]
+                    winner_username = participants[0][2] or "کاربر"
+                    
+                    # ایجاد کوپن برای برنده
+                    coupon = create_coupon(winner_id, "competition_winner")
+                    if coupon:
+                        logger.info(f"🎫 کوپن جایزه برای برنده {winner_id} ایجاد شد: {coupon['coupon_code']}")
+                    else:
+                        logger.error(f"❌ خطا در ایجاد کوپن برای برنده {winner_id}")
+                
+                if participants:
+                    # ساخت رتبه‌بندی نهایی
+                    ranking_lines = []
+                    for i, p_data in enumerate(participants[:10], 1):  # حداکثر ۱۰ نفر
+                        p_id, p_minutes, p_username, p_firstname = p_data
+                        
+                        # دریافت نام واقعی از تلگرام
+                        try:
+                            chat_member = await context.bot.get_chat(p_id)
+                            if chat_member.first_name:
+                                display_name = chat_member.first_name
+                                if chat_member.last_name:
+                                    display_name += f" {chat_member.last_name}"
+                            elif chat_member.username:
+                                display_name = f"@{chat_member.username}"
+                            else:
+                                display_name = p_username or f"کاربر {p_id}"
+                        except:
+                            display_name = p_username or f"کاربر {p_id}"
+                        
+                        # مدال‌ها
+                        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+                        medal = medals[i-1] if i <= 10 else f"{i}."
+                        
+                        # فرمت زمان
+                        hours = p_minutes // 60
+                        mins = p_minutes % 60
+                        if hours > 0 and mins > 0:
+                            time_display = f"{hours} ساعت و {mins} دقیقه"
+                        elif hours > 0:
+                            time_display = f"{hours} ساعت"
+                        else:
+                            time_display = f"{mins} دقیقه"
+                        
+                        winner_emoji = " 🎉 (برنده)" if p_id == winner_id else ""
+                        ranking_lines.append(f"{medal} {html.escape(display_name)}: {time_display}{winner_emoji}")
+                    
+                    ranking_text = "\n".join(ranking_lines[:10])
+                    if len(participants) > 10:
+                        ranking_text += f"\n📊 و {len(participants)-10} نفر دیگر..."
+                    
+                    # ارسال به همه شرکت‌کنندگان
+                    for participant in participants:
+                        p_id = participant[0]
+                        p_minutes = participant[1]
+                        
+                        # فرمت زمان کاربر
+                        hours = p_minutes // 60
+                        mins = p_minutes % 60
+                        if hours > 0 and mins > 0:
+                            user_time_display = f"{hours} ساعت و {mins} دقیقه"
+                        elif hours > 0:
+                            user_time_display = f"{hours} ساعت"
+                        else:
+                            user_time_display = f"{mins} دقیقه"
+                        
+                        # دریافت نام کاربر
+                        try:
+                            chat_member = await context.bot.get_chat(p_id)
+                            if chat_member.first_name:
+                                user_display = chat_member.first_name
+                                if chat_member.last_name:
+                                    user_display += f" {chat_member.last_name}"
+                            elif chat_member.username:
+                                user_display = f"@{chat_member.username}"
+                            else:
+                                user_display = participant[2] or "کاربر"
+                        except:
+                            user_display = participant[2] or "کاربر"
+                        
+                        # متن پایه برای همه
+                        message = (
+                            f"🏁 <b>اتاق رقابت #{room_code} پایان یافت!</b>\n\n"
+                            f"📅 <b>تاریخ:</b> {current_date_str.replace('-', '/')}\n"
+                            f"🕒 <b>ساعت پایان:</b> {end_time_str}\n"
+                            f"👥 <b>تعداد شرکت‌کنندگان:</b> {player_count} نفر\n\n"
+                            f"<b>📊 آمار شما:</b>\n"
+                            f"⏱ مجموع مطالعه: {user_time_display}\n\n"
+                            f"<b>🏆 رتبه‌بندی نهایی:</b>\n"
+                            f"{ranking_text}\n"
+                        )
+                        
+                        # اگر این کاربر برنده است، پیام جایزه اضافه کن
+                        if p_id == winner_id and coupon:
+                            message += (
+                                f"\n🎉 <b>🎊 تبریک! شما برنده شدید! 🎊</b>\n"
+                                f"🎫 <b>کوپن جایزه:</b> <code>{coupon['coupon_code']}</code>\n"
+                                f"💰 <b>ارزش:</b> ۴۰,۰۰۰ تومان\n"
+                                f"📅 <b>تاریخ اعطا:</b> {coupon['earned_date']}\n\n"
+                                f"💡 از این کوپن برای خدمات مختلف استفاده کنید!\n"
+                                f"📋 برای مشاهده کوپن‌ها: /my_coupons"
+                            )
+                        else:
+                            # رتبه کاربر
+                            user_rank = next((i for i, p in enumerate(participants, 1) if p[0] == p_id), None)
+                            if user_rank:
                                 message += (
                                     f"\n💪 <b>دفعه بعد بیشتر تلاش کن!</b>\n"
-                                    f"🎯 برای شرکت در رقابت‌های جدید از منوی رقابت استفاده کن."
+                                    f"🎯 شما در رتبه {user_rank} این رقابت قرار گرفتی.\n"
+                                    f"⏱ مجموع مطالعه شما: {user_time_display}\n\n"
+                                    f"🔥 برای شرکت در رقابت‌های جدید از منوی «رقابت گروهی» استفاده کن."
                                 )
+                        
+                        try:
+                            await context.bot.send_message(
+                                p_id,
+                                message,
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=get_competition_keyboard()
+                            )
+                            logger.info(f"✅ پیام پایان رقابت به کاربر {p_id} ({user_display}) ارسال شد")
                             
-                            try:
-                                await context.bot.send_message(
-                                    p_id,
-                                    message,
-                                    parse_mode=ParseMode.HTML,
-                                    reply_markup=get_competition_keyboard()
-                                )
-                                logger.info(f"✅ پیام پایان رقابت به کاربر {p_id} ارسال شد")
-                            except Exception as e:
-                                if "Forbidden: bot was blocked by the user" in str(e):
-                                    logger.warning(f"🚫 کاربر {p_id} ربات رو بلاک کرده")
-                                else:
-                                    logger.error(f"❌ خطا در ارسال به کاربر {p_id}: {e}")
-                            
-                            await asyncio.sleep(0.1)  # تأخیر بین ارسال‌ها
+                        except Exception as e:
+                            if "Forbidden: bot was blocked by the user" in str(e):
+                                logger.warning(f"🚫 کاربر {p_id} ربات رو بلاک کرده")
+                            else:
+                                logger.error(f"❌ خطا در ارسال به کاربر {p_id}: {e}")
+                        
+                        await asyncio.sleep(0.15)  # تأخیر بین ارسال‌ها
         
-        logger.info(f"✅ بررسی اتاق‌ها تکمیل شد")
+        logger.info(f"✅ بررسی {len(results)} اتاق تکمیل شد")
         
     except Exception as e:
-        logger.error(f"❌ خطا در بررسی اتاق‌ها: {e}", exc_info=True)
+        logger.error(f"❌ خطای بحرانی در بررسی اتاق‌ها: {e}", exc_info=True)
+                
+                # ========== سناریوی دوم: ۵ نفر یا بیشتر ==========
+                
+                        
+                        # ارسال به همه شرکت‌کنندگان
 
 
 async def set_card_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
