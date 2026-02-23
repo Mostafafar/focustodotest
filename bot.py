@@ -4914,11 +4914,33 @@ def check_report_sent_today(user_id: int, report_type: str) -> bool:
         logger.error(f"خطا در بررسی گزارش ارسال شده: {e}")
         return False  # اگر خطا، ارسال کن
 def create_half_coupon(user_id: int, source: str = "encouragement") -> Optional[Dict]:
-    """ایجاد کوپن ۲۰,۰۰۰ تومانی (نیم‌کوپن)"""
+    """ایجاد نیم‌کوپن ۲۰,۰۰۰ تومانی با اعتبار نامحدود"""
     try:
         date_str, time_str = get_iran_time()
         coupon_code = generate_coupon_code(user_id)
         
+        # اضافه کردن ستون is_half_coupon اگر وجود ندارد
+        # ابتدا بررسی کنیم ستون وجود دارد یا نه
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # بررسی وجود ستون is_half_coupon
+        cursor.execute("""
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name='coupons' AND column_name='is_half_coupon'
+        """)
+        
+        if not cursor.fetchone():
+            # اضافه کردن ستون
+            cursor.execute("ALTER TABLE coupons ADD COLUMN is_half_coupon BOOLEAN DEFAULT FALSE")
+            conn.commit()
+            logger.info("✅ ستون is_half_coupon به جدول coupons اضافه شد")
+        
+        cursor.close()
+        db.return_connection(conn)
+        
+        # درج نیم‌کوپن (بدون تاریخ انقضا)
         query = """
         INSERT INTO coupons (user_id, coupon_code, coupon_source, value, 
                            earned_date, status, verified_by_admin, is_half_coupon)
@@ -4930,6 +4952,7 @@ def create_half_coupon(user_id: int, source: str = "encouragement") -> Optional[
             (user_id, coupon_code, source, 20000, date_str), fetch=True)
         
         if result:
+            logger.info(f"✅ نیم‌کوپن ایجاد شد: {coupon_code} برای کاربر {user_id} (اعتبار نامحدود)")
             return {
                 "coupon_id": result[0],
                 "coupon_code": result[1],
@@ -4941,7 +4964,7 @@ def create_half_coupon(user_id: int, source: str = "encouragement") -> Optional[
         return None
         
     except Exception as e:
-        logger.error(f"❌ خطا در ایجاد نیم‌کوپن: {e}")
+        logger.error(f"❌ خطا در ایجاد نیم‌کوپن: {e}", exc_info=True)
         return None
 def combine_half_coupons(user_id: int, coupon_code1: str, coupon_code2: str) -> Optional[str]:
     """ترکیب دو نیم‌کوپن برای ساخت یک کوپن کامل"""
@@ -4952,9 +4975,11 @@ def combine_half_coupons(user_id: int, coupon_code1: str, coupon_code2: str) -> 
         conn = db.get_connection()
         cursor = conn.cursor()
         
+        logger.info(f"🔄 تلاش برای ترکیب نیم‌کوپن‌ها: {coupon_code1} و {coupon_code2} برای کاربر {user_id}")
+        
         # بررسی کوپن‌ها
         cursor.execute("""
-        SELECT coupon_id, coupon_code, status, is_half_coupon, user_id
+        SELECT coupon_id, coupon_code, status, is_half_coupon, user_id, value
         FROM coupons 
         WHERE coupon_code IN (%s, %s) AND status = 'active'
         """, (coupon_code1, coupon_code2))
@@ -4962,21 +4987,23 @@ def combine_half_coupons(user_id: int, coupon_code1: str, coupon_code2: str) -> 
         coupons = cursor.fetchall()
         
         if len(coupons) != 2:
-            logger.error(f"❌ کوپن‌ها معتبر نیستند")
+            logger.error(f"❌ کوپن‌ها معتبر نیستند - تعداد پیدا شده: {len(coupons)}")
             return None
         
         # بررسی مالکیت و نوع کوپن‌ها
         for coupon in coupons:
             if coupon[4] != user_id:
-                logger.error(f"❌ کوپن {coupon[1]} متعلق به کاربر نیست")
+                logger.error(f"❌ کوپن {coupon[1]} متعلق به کاربر {coupon[4]} است نه کاربر {user_id}")
                 return None
             if not coupon[3]:  # اگر نیم‌کوپن نباشد
-                logger.error(f"❌ کوپن {coupon[1]} نیم‌کوپن نیست")
+                logger.error(f"❌ کوپن {coupon[1]} نیم‌کوپن نیست (is_half_coupon={coupon[3]})")
                 return None
         
         # ایجاد کوپن کامل جدید
         date_str, time_str = get_iran_time()
         full_coupon_code = generate_coupon_code(user_id)
+        
+        logger.info(f"🎫 ایجاد کوپن کامل جدید: {full_coupon_code}")
         
         cursor.execute("""
         INSERT INTO coupons (user_id, coupon_code, coupon_source, value, 
@@ -4987,15 +5014,16 @@ def combine_half_coupons(user_id: int, coupon_code1: str, coupon_code2: str) -> 
         
         full_coupon_id = cursor.fetchone()[0]
         
-        # غیرفعال کردن نیم‌کوپن‌ها و ثبت رابطه
+        # غیرفعال کردن نیم‌کوپن‌ها
         for coupon in coupons:
+            logger.info(f"🔄 غیرفعال کردن نیم‌کوپن: {coupon[1]}")
             cursor.execute("""
             UPDATE coupons 
-            SET status = 'combined', 
-                parent_coupon_id = %s,
-                used_date = %s
+            SET status = 'used', 
+                used_date = %s,
+                used_for = %s
             WHERE coupon_id = %s
-            """, (full_coupon_id, date_str, coupon[0]))
+            """, (date_str, f"combined_to_{full_coupon_code}", coupon[0]))
         
         conn.commit()
         logger.info(f"✅ نیم‌کوپن‌ها ترکیب شدند: {coupon_code1} + {coupon_code2} = {full_coupon_code}")
