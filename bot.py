@@ -4874,7 +4874,7 @@ async def send_night_report(context: ContextTypes.DEFAULT_TYPE) -> None:
                     elif target_hours > 0:
                         target_display = f"{target_hours} ساعت"
                     else:
-                        target_display = f{target_mins} دقیقه"
+                        target_display = f"{target_mins} دقیقه"
                     
                     text += f"🎯 <b>{target_display}</b> (۳۰ دقیقه بیشتر از امروز)\n"
                     
