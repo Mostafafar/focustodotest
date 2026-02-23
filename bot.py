@@ -1153,26 +1153,34 @@ def get_user_weekly_rank(user_id: int) -> Tuple[Optional[int], Optional[int], Op
         logger.error(f"خطا در محاسبه رتبه هفتگی: {e}")
         return None, 0, 0
 
-def get_inactive_users_today() -> List[Dict]:
-    """دریافت کاربرانی که امروز مطالعه نکرده‌اند"""
+def get_inactive_users_for_offer() -> List[Dict]:
+    """دریافت کاربرانی که ۴ روز است مطالعه نکرده‌اند و در ۴ روز گذشته پیشنهاد دریافت نکرده‌اند"""
     try:
-        date_str, _ = get_iran_time()
+        now = datetime.now(IRAN_TZ)
+        four_days_ago = now - timedelta(days=4)
+        four_days_ago_str = four_days_ago.strftime("%Y-%m-%d")
         
+        # کاربرانی که در ۴ روز گذشته مطالعه نداشته‌اند
         query = """
-        SELECT u.user_id, u.username, u.grade, u.field
+        SELECT DISTINCT u.user_id, u.username, u.grade, u.field
         FROM users u
-        LEFT JOIN daily_rankings dr ON u.user_id = dr.user_id AND dr.date = %s
+        LEFT JOIN study_sessions ss ON u.user_id = ss.user_id 
+            AND ss.completed = TRUE 
+            AND ss.start_time >= %s
         WHERE u.is_active = TRUE 
-        AND (dr.user_id IS NULL OR dr.total_minutes = 0)
-        AND u.user_id NOT IN (
-            SELECT user_id FROM user_activities 
-            WHERE date = %s AND received_encouragement = TRUE
-        )
+            AND ss.session_id IS NULL
+            AND u.user_id NOT IN (
+                SELECT user_id FROM user_offers 
+                WHERE offer_date >= %s
+            )
         ORDER BY RANDOM()
-        LIMIT 50
+        LIMIT 20
         """
         
-        results = db.execute_query(query, (date_str, date_str), fetchall=True)
+        # تبدیل timestamp
+        four_days_ago_timestamp = int(four_days_ago.timestamp())
+        
+        results = db.execute_query(query, (four_days_ago_timestamp, four_days_ago_str), fetchall=True)
         
         users = []
         for row in results:
@@ -1183,11 +1191,131 @@ def get_inactive_users_today() -> List[Dict]:
                 "field": row[3]
             })
         
+        logger.info(f"📊 {len(users)} کاربر بدون مطالعه در ۴ روز گذشته پیدا شد")
         return users
         
     except Exception as e:
-        logger.error(f"خطا در دریافت کاربران بی‌فعال: {e}")
+        logger.error(f"خطا در دریافت کاربران بدون مطالعه: {e}")
         return []
+
+def mark_offer_sent(user_id: int) -> bool:
+    """علامت‌گذاری ارسال پیشنهاد به کاربر"""
+    try:
+        now = datetime.now(IRAN_TZ)
+        date_str = now.strftime("%Y-%m-%d")
+        
+        # ایجاد جدول اگر وجود ندارد
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_offers (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT REFERENCES users(user_id),
+            offer_date DATE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, offer_date)
+        )
+        """)
+        conn.commit()
+        
+        cursor.close()
+        db.return_connection(conn)
+        
+        # ثبت ارسال پیشنهاد
+        query = """
+        INSERT INTO user_offers (user_id, offer_date)
+        VALUES (%s, %s)
+        ON CONFLICT (user_id, offer_date) DO NOTHING
+        """
+        
+        db.execute_query(query, (user_id, date_str))
+        return True
+        
+    except Exception as e:
+        logger.error(f"خطا در علامت‌گذاری پیشنهاد: {e}")
+        return False
+
+async def send_random_offer_to_inactive(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ارسال پیشنهاد رندوم به کاربران بدون مطالعه (هر ۴ روز یکبار)"""
+    try:
+        logger.info("🎁 شروع ارسال پیشنهاد به کاربران بدون مطالعه...")
+        
+        # دریافت کاربران واجد شرایط
+        inactive_users = get_inactive_users_for_offer()
+        
+        if not inactive_users:
+            logger.info("📭 هیچ کاربر واجد شرایطی برای دریافت پیشنهاد وجود ندارد")
+            return
+        
+        # انتخاب حداکثر ۱۰ کاربر به صورت رندوم
+        import random
+        selected_users = random.sample(inactive_users, min(10, len(inactive_users)))
+        
+        total_sent = 0
+        
+        for user in selected_users:
+            try:
+                # متن‌های مختلف پیشنهاد
+                offer_messages = [
+                    "🎁 <b>پیشنهاد ویژه برای شما!</b>\n\n"
+                    "سلام! ۴ روزه که مطالعه نکردی...\n\n"
+                    "🔥 اگه همین امروز یک جلسه مطالعه ثبت کنی:\n"
+                    "✅ <b>یک نیم‌کوپن ۲۰,۰۰۰ تومانی هدیه می‌گیری!</b>\n"
+                    "🎯 شانس برنده شدن در قرعه‌کشی هفتگی\n"
+                    "📈 رتبه‌ات در جدول هفتگی بهبود پیدا می‌کنه\n\n"
+                    "💪 <b>همین الان شروع کن!</b>",
+                    
+                    "🔥 <b>یک فرصت طلایی!</b>\n\n"
+                    "۴ روز گذشته و هنوز مطالعه‌ای ثبت نکردی...\n\n"
+                    "💰 <b>ثبت مطالعه امروز = ۲۰,۰۰۰ تومان جایزه!</b>\n\n"
+                    "✅ کافیه فقط ۳۰ دقیقه مطالعه کنی و:\n"
+                    "• نیم‌کوپن ۲۰,۰۰۰ تومانی بگیری\n"
+                    "• در قرعه‌کشی هفتگی شرکت کنی\n"
+                    "• رتبه‌ات رو تو جدول هفتگی بالا ببری\n\n"
+                    "🎯 <b>فرصت رو از دست نده!</b>",
+                    
+                    "💎 <b>یک خبر خوب!</b>\n\n"
+                    "ما ۴ روزه تو رو ندیدیم... دلتنگ شدیم!\n\n"
+                    "🎁 <b>یک هدیه ویژه برای بازگشت تو:</b>\n"
+                    "• نیم‌کوپن ۲۰,۰۰۰ تومانی\n"
+                    "• شرکت در قرعه‌کشی هفتگی\n"
+                    "• شانس قرار گرفتن در جمع برترها\n\n"
+                    "📊 آمار کاربرانی که امروز مطالعه کردن:\n"
+                    "• ۷۰٪ حداقل ۶۰ دقیقه مطالعه کردن\n"
+                    "• ۳۰٪ جایگاهشون تو جدول هفتگی بهتر شده\n\n"
+                    "🏆 <b>تو هم می‌تونی یکی از اونا باشی!</b>"
+                ]
+                
+                message = random.choice(offer_messages)
+                
+                # ارسال پیام
+                await context.bot.send_message(
+                    user["user_id"],
+                    message,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=get_main_menu_keyboard()
+                )
+                
+                # علامت‌گذاری ارسال شده
+                mark_offer_sent(user["user_id"])
+                total_sent += 1
+                
+                logger.info(f"✅ پیشنهاد به کاربر {user['user_id']} ارسال شد")
+                
+                await asyncio.sleep(0.2)
+                
+            except Exception as e:
+                if "Forbidden: bot was blocked by the user" in str(e):
+                    logger.warning(f"🚫 کاربر {user['user_id']} ربات رو بلاک کرده")
+                else:
+                    logger.error(f"❌ خطا در ارسال پیشنهاد به کاربر {user['user_id']}: {e}")
+                continue
+        
+        logger.info(f"🎁 پیشنهاد به {total_sent} کاربر ارسال شد")
+        
+    except Exception as e:
+        logger.error(f"خطا در ارسال پیشنهاد: {e}", exc_info=True)
 
 
 def create_coupon_for_user(user_id: int, study_session_id: int = None) -> Optional[Dict]:
