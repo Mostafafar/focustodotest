@@ -3308,7 +3308,7 @@ async def show_room_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             reply_markup=get_competition_keyboard()
 )
 def create_competition_room(creator_id: int, end_time: str, password: str) -> Optional[str]:
-    """ایجاد اتاق رقابت جدید"""
+    """ایجاد اتاق رقابت جدید با زمان ایران"""
     conn = None
     cursor = None
     
@@ -3321,21 +3321,21 @@ def create_competition_room(creator_id: int, end_time: str, password: str) -> Op
         
         # دریافت تاریخ و زمان ایران
         now_iran = datetime.now(IRAN_TZ)
-        date_str = now_iran.strftime("%Y-%m-%d")
-        time_str = now_iran.strftime("%H:%M:%S")
         
-        # 1. ایجاد اتاق با تاریخ و زمان ایران
+        # ذخیره در دیتابیس به صورت UTC
+        now_utc = now_iran.astimezone(pytz.UTC)
+        
+        logger.info(f"📅 زمان ایران: {now_iran.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"📅 زمان UTC: {now_utc.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # ایجاد اتاق
         query = """
         INSERT INTO competition_rooms (room_code, creator_id, password, end_time, status, created_at)
         VALUES (%s, %s, %s, %s, 'waiting', %s)
         RETURNING room_code
         """
         
-        logger.info(f"🔍 در حال ایجاد اتاق در دیتابیس...")
-        logger.info(f"📅 زمان ایجاد (ایران): {date_str} {time_str}")
-        
-        # 🔴 اصلاح: ارسال now_iran به عنوان پارامتر
-        cursor.execute(query, (room_code, creator_id, password, end_time, now_iran))
+        cursor.execute(query, (room_code, creator_id, password, end_time, now_utc))
         result = cursor.fetchone()
         
         if not result:
@@ -3343,27 +3343,22 @@ def create_competition_room(creator_id: int, end_time: str, password: str) -> Op
             conn.rollback()
             return None
         
-        logger.info(f"✅ اتاق {room_code} ایجاد شد")
-        
-        # 2. اضافه کردن سازنده به اتاق
+        # اضافه کردن سازنده به اتاق
         query2 = """
         INSERT INTO room_participants (room_code, user_id, joined_at)
         VALUES (%s, %s, %s)
         """
         
-        logger.info(f"🔍 در حال اضافه کردن سازنده {creator_id} به اتاق...")
-        cursor.execute(query2, (room_code, creator_id, now_iran))
-        
+        cursor.execute(query2, (room_code, creator_id, now_utc))
         conn.commit()
-        logger.info(f"✅ سازنده {creator_id} به اتاق {room_code} اضافه شد")
         
+        logger.info(f"✅ اتاق {room_code} با موفقیت ایجاد شد")
         return room_code
         
     except Exception as e:
         logger.error(f"❌ خطا در ایجاد اتاق رقابت: {e}", exc_info=True)
         if conn:
             conn.rollback()
-            logger.info("🔁 Rollback انجام شد")
         return None
         
     finally:
@@ -3371,7 +3366,6 @@ def create_competition_room(creator_id: int, end_time: str, password: str) -> Op
             cursor.close()
         if conn:
             db.return_connection(conn)
-            logger.info("🔌 Connection بازگردانده شد")
 def join_competition_room(room_code: str, user_id: int, password: str) -> bool:
     """پیوستن به اتاق رقابت"""
     try:
