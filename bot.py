@@ -8149,7 +8149,7 @@ async def join_room_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 async def show_my_rooms(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
-    """نمایش اتاق‌های کاربر"""
+    """نمایش اتاق‌های کاربر با زمان ایران"""
     try:
         # دریافت اتاق‌های کاربر
         query = """
@@ -8178,24 +8178,45 @@ async def show_my_rooms(update: Update, context: ContextTypes.DEFAULT_TYPE, user
         for row in results:
             room_code, end_time, status, player_count, created_at = row
             
+            # ========== تبدیل زمان ایجاد به وقت ایران ==========
+            if created_at:
+                if isinstance(created_at, datetime):
+                    # اگر datetime با timezone نداره، فرض کنیم UTC هست
+                    if created_at.tzinfo is None:
+                        created_at_utc = pytz.UTC.localize(created_at)
+                        created_at_iran = created_at_utc.astimezone(IRAN_TZ)
+                    else:
+                        # اگر timezone داره، مستقیم تبدیل کن
+                        created_at_iran = created_at.astimezone(IRAN_TZ)
+                    
+                    created_str = created_at_iran.strftime("%H:%M")
+                else:
+                    # اگر string هست، تبدیلش کن
+                    try:
+                        created_at_dt = datetime.fromisoformat(str(created_at).replace('Z', '+00:00'))
+                        created_at_utc = pytz.UTC.localize(created_at_dt) if created_at_dt.tzinfo is None else created_at_dt
+                        created_at_iran = created_at_utc.astimezone(IRAN_TZ)
+                        created_str = created_at_iran.strftime("%H:%M")
+                    except:
+                        created_str = str(created_at)
+            else:
+                created_str = "نامشخص"
+            # ====================================================
+            
             # وضعیت اتاق
             status_emoji = {
                 'waiting': '⏳',
                 'active': '🔥',
-                'finished': '✅'
+                'finished': '✅',
+                'cancelled': '❌'
             }.get(status, '❓')
             
             status_text = {
                 'waiting': 'در انتظار',
                 'active': 'فعال',
-                'finished': 'اتمام'
+                'finished': 'اتمام یافته',
+                'cancelled': 'لغو شده'
             }.get(status, 'نامشخص')
-            
-            # تاریخ ایجاد
-            if isinstance(created_at, datetime):
-                created_str = created_at.strftime("%H:%M")
-            else:
-                created_str = str(created_at)
             
             text += f"<b>{status_emoji} اتاق {room_code}</b>\n"
             text += f"🕒 تا: {end_time}\n"
@@ -8222,13 +8243,10 @@ async def show_my_rooms(update: Update, context: ContextTypes.DEFAULT_TYPE, user
         
     except Exception as e:
         logger.error(f"خطا در نمایش اتاق‌های کاربر: {e}", exc_info=True)
-        # نسخه ساده بدون HTML در صورت خطا
         await update.message.reply_text(
-            f"🏆 اتاق‌های شما:\n\n"
-            f"برای مشاهده رتبه‌بندی اتاق‌ها از دستور /room_کد_اتاق استفاده کنید.\n\n"
-            f"مثال: /room_EJ2PJN",
+            "❌ خطا در دریافت اطلاعات اتاق‌ها.",
             reply_markup=get_competition_keyboard()
-        )
+    )
 
 async def handle_room_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """دستور /room برای مشاهده رتبه‌بندی اتاق"""
