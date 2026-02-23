@@ -3427,7 +3427,7 @@ def join_competition_room(room_code: str, user_id: int, password: str) -> bool:
         return False
 
 def get_room_info(room_code: str) -> Optional[Dict]:
-    """دریافت اطلاعات اتاق"""
+    """دریافت اطلاعات اتاق با زمان ایران"""
     try:
         query = """
         SELECT cr.room_code, cr.creator_id, cr.end_time, cr.status,
@@ -3448,25 +3448,16 @@ def get_room_info(room_code: str) -> Optional[Dict]:
             
             # تبدیل زمان ایجاد به وقت ایران
             if created_at:
-                if isinstance(created_at, str):
-                    # اگر رشته است، فرض کنیم UTC است
-                    try:
-                        created_at_utc = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                        # تبدیل به وقت ایران
-                        created_at_obj = created_at_utc.astimezone(IRAN_TZ)
-                    except:
-                        created_at_obj = datetime.now(IRAN_TZ)
-                else:
-                    # اگر datetime است
+                if isinstance(created_at, datetime):
                     if created_at.tzinfo is None:
-                        # اگر بدون تایم‌زون باشد، فرض کنیم UTC است
                         created_at_utc = pytz.UTC.localize(created_at)
-                        created_at_obj = created_at_utc.astimezone(IRAN_TZ)
+                        created_at_iran = created_at_utc.astimezone(IRAN_TZ)
                     else:
-                        # اگر با تایم‌زون باشد، مستقیم تبدیل کن
-                        created_at_obj = created_at.astimezone(IRAN_TZ)
-                
-                created_at_str = created_at_obj.strftime("%Y/%m/%d %H:%M")
+                        created_at_iran = created_at.astimezone(IRAN_TZ)
+                    
+                    created_at_str = created_at_iran.strftime("%Y/%m/%d %H:%M")
+                else:
+                    created_at_str = str(created_at)
             else:
                 created_at_str = "نامشخص"
             
@@ -3475,7 +3466,7 @@ def get_room_info(room_code: str) -> Optional[Dict]:
                 "creator_id": creator_id,
                 "end_time": end_time,
                 "status": status,
-                "created_at": created_at_str,  # زمان فرمت شده ایران
+                "created_at": created_at_str,
                 "creator_name": creator_name,
                 "player_count": player_count
             }
